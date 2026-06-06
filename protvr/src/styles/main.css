@@ -1,0 +1,116 @@
+html,
+body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #050816;
+    color: #e2e8f0;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+#app,
+.app-shell {
+    position: fixed;
+    inset: 0;
+}
+
+.app-shell {
+    display: flex;
+    flex-direction: column;
+}
+
+.viewer-host {
+    position: absolute;
+    inset: 0;
+}
+
+.toolbar {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 10;
+    display: flex;
+    gap: 12px;
+    row-gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    max-width: calc(100vw - 32px);
+}
+
+.toolbar>* {
+    flex: 0 0 auto;
+}
+
+.sidebar {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(320px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    pointer-events: auto;
+}
+
+@media (max-width: 720px) {
+    .toolbar {
+        right: 16px;
+    }
+
+    .sidebar {
+        top: auto;
+        bottom: 16px;
+        left: 16px;
+        right: 16px;
+        width: auto;
+        max-height: 42vh;
+    }
+}
+
+.xr-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: static !important;
+    inset: auto !important;
+    top: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    min-width: 104px;
+    padding: 10px 14px;
+    border: none;
+    border-radius: 8px;
+    color: #ffffff;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 10px 30px rgba(2, 6, 23, 0.25);
+    transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+}
+
+.xr-button:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+    box-shadow: 0 12px 36px rgba(2, 6, 23, 0.3);
+}
+
+.xr-button:focus-visible {
+    outline: 2px solid rgba(148, 163, 184, 0.9);
+    outline-offset: 2px;
+}
+
+.xr-button--vr {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+}
+
+.xr-button--ar {
+    background: linear-gradient(135deg, #f97316, #ea580c);
+}

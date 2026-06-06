@@ -1,0 +1,29 @@
+.upload-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.85);
+    color: #ffffff;
+    cursor: pointer;
+    font-weight: 600;
+    user-select: none;
+    box-shadow: 0 10px 30px rgba(2, 6, 23, 0.25);
+    transition: transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.upload-control:hover {
+    transform: translateY(-1px);
+    background: rgba(15, 23, 42, 0.95);
+    box-shadow: 0 12px 36px rgba(2, 6, 23, 0.3);
+}
+
+.upload-control:focus-within {
+    outline: 2px solid rgba(148, 163, 184, 0.8);
+    outline-offset: 2px;
+}
+
+.upload-control__input {
+    display: none;
+}
