@@ -1,9 +1,12 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { ARButton } from "three/addons/webxr/ARButton.js";
 import { VRButton } from "three/addons/webxr/VRButton.js";
 import { PDBLoader } from "three/addons/loaders/PDBLoader.js";
 import { ELEMENT_COLORS, ELEMENT_RADII } from "./Constants";
+
+export type TransformMode = "translate" | "rotate";
 
 type AtomPosition = {
   pos: THREE.Vector3;
@@ -17,6 +20,7 @@ type MoleculeRecord = {
   baseObject: THREE.Object3D;
   outlineObject: THREE.Object3D;
   position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
   scale: THREE.Vector3;
   outlineColor: number;
 };
@@ -27,6 +31,7 @@ export class MoleculeViewer {
   public readonly renderer: THREE.WebGLRenderer;
 
   private readonly controls: OrbitControls;
+  private readonly transformControls: TransformControls;
   private readonly container: HTMLElement;
   private readonly molecules = new Map<string, MoleculeRecord>();
   private currentMoleculeId: string | null = null;
@@ -34,6 +39,8 @@ export class MoleculeViewer {
   private readonly loader = new PDBLoader();
   private readonly arScaleFactor = 0.08;
   private readonly arDistance = 1.5;
+  private transformMode: TransformMode = "translate";
+  private isApplyingPresentation = false;
 
   public constructor(container: HTMLElement) {
     this.container = container;
@@ -73,12 +80,40 @@ export class MoleculeViewer {
     this.controls.target.set(0, 0, 0);
     this.controls.update();
 
+    // Controles de transformação;
+    this.transformControls = new TransformControls(
+      this.camera,
+      this.renderer.domElement,
+    );
+    this.transformControls.setMode(this.transformMode);
+    this.transformControls.setSpace("world");
+    this.transformControls.setSize(0.9);
+    this.transformControls.addEventListener(
+      "dragging-changed",
+      (event: any) => {
+        this.controls.enabled = !event.value;
+      },
+    );
+    this.transformControls.addEventListener(
+      "objectChange",
+      this.handleTransformObjectChange,
+    );
+    this.scene.add(this.transformControls.getHelper());
+    this.setupXRControllers();
+
     // Configurações para WebXR;
     this.renderer.xr.addEventListener(
       "sessionstart",
       this.handleXRSessionStart,
     );
     this.renderer.xr.addEventListener("sessionend", this.handleXRSessionEnd);
+
+    // Grid para facilitar a localização;
+    const size = 10;
+    const divisions = 10;
+    const gridHelper = new THREE.GridHelper( size, divisions );
+    this.scene.add( gridHelper );
+
 
     // Eventos e loop de renderização;
     window.addEventListener("resize", this.handleResize);
@@ -136,6 +171,7 @@ export class MoleculeViewer {
     if (this.currentMoleculeId === id) return;
 
     this.currentMoleculeId = id;
+    this.syncTransformControlsTarget();
     if (this.isARSession()) {
       this.applyARPresentation();
     }
@@ -152,6 +188,7 @@ export class MoleculeViewer {
     if (this.currentMoleculeId === id) {
       const next = Array.from(this.molecules.keys()).at(-1) ?? null;
       this.currentMoleculeId = next;
+      this.syncTransformControlsTarget();
       if (this.isARSession()) {
         this.applyARPresentation();
       }
@@ -170,6 +207,17 @@ export class MoleculeViewer {
     molecule.object.position.y += delta.y;
     molecule.object.position.z += delta.z;
     molecule.position.copy(molecule.object.position);
+    molecule.quaternion.copy(molecule.object.quaternion);
+  }
+
+  public setTransformMode(mode: TransformMode) {
+    this.transformMode = mode;
+    this.transformControls.setMode(mode);
+    this.transformControls.setSpace(mode === "rotate" ? "local" : "world");
+  }
+
+  public getTransformMode() {
+    return this.transformMode;
   }
 
   private handleResize = () => {
@@ -185,6 +233,17 @@ export class MoleculeViewer {
   private renderLoop = () => {
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
+  };
+
+  private handleTransformObjectChange = () => {
+    if (this.isApplyingPresentation || this.isARSession()) return;
+
+    const molecule = this.getCurrentMolecule();
+    if (!molecule) return;
+
+    molecule.position.copy(molecule.object.position);
+    molecule.quaternion.copy(molecule.object.quaternion);
+    molecule.scale.copy(molecule.object.scale);
   };
 
   private handleXRSessionStart = () => {
@@ -241,12 +300,14 @@ export class MoleculeViewer {
       baseObject: object,
       outlineObject,
       position: wrapper.position.clone(),
+      quaternion: wrapper.quaternion.clone(),
       scale: wrapper.scale.clone(),
       outlineColor,
     });
 
     this.scene.add(wrapper);
     this.currentMoleculeId = id;
+    this.syncTransformControlsTarget();
     if (this.isARSession()) {
       this.applyARPresentation();
     }
@@ -264,20 +325,76 @@ export class MoleculeViewer {
     return session?.environmentBlendMode !== "opaque";
   }
 
+  private setupXRControllers() {
+    for (let index = 0; index < 2; index += 1) {
+      const controller = this.renderer.xr.getController(index);
+      controller.userData.active = false;
+      controller.addEventListener("selectstart", this.handleXRControllerEvent);
+      controller.addEventListener("selectend", this.handleXRControllerEvent);
+      controller.addEventListener("move", this.handleXRControllerEvent);
+      this.scene.add(controller);
+    }
+  }
+
+  private handleXRControllerEvent = (event: any) => {
+    const controller = event.target as THREE.Group | null;
+    if (
+      !controller ||
+      (controller.userData.active === false && event.type !== "selectstart")
+    ) {
+      return;
+    }
+
+    this.transformControls
+      .getRaycaster()
+      .setFromXRController(controller as any);
+
+    switch (event.type) {
+      case "selectstart":
+        controller.userData.active = true;
+        this.transformControls.pointerDown(null);
+        break;
+      case "selectend":
+        this.transformControls.pointerUp(null);
+        controller.userData.active = false;
+        break;
+      case "move":
+        this.transformControls.pointerHover(null);
+        this.transformControls.pointerMove(null);
+        break;
+    }
+  };
+
+  private syncTransformControlsTarget() {
+    const current = this.getCurrentMolecule();
+    if (!current) {
+      this.transformControls.detach();
+      return;
+    }
+
+    this.transformControls.attach(current.object);
+  }
+
   private applyARPresentation() {
     const current = this.getCurrentMolecule();
     if (!current) return;
 
+    this.isApplyingPresentation = true;
     current.object.scale.copy(current.scale).multiplyScalar(this.arScaleFactor);
     current.object.position.set(0, 0, -this.arDistance);
+    current.object.quaternion.copy(current.quaternion);
+    this.isApplyingPresentation = false;
   }
 
   private resetMoleculePresentation() {
     const current = this.getCurrentMolecule();
     if (!current) return;
 
+    this.isApplyingPresentation = true;
     current.object.scale.copy(current.scale);
     current.object.position.copy(current.position);
+    current.object.quaternion.copy(current.quaternion);
+    this.isApplyingPresentation = false;
   }
 
   private disposeObject3D(object: THREE.Object3D) {

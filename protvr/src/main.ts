@@ -48,8 +48,8 @@ const moleculeList = createMoleculeList({
 });
 
 const movementControls = createMovementControls({
-  onMove: (delta) => {
-    viewer.moveSelected(delta);
+  onModeChange: (mode) => {
+    viewer.setTransformMode(mode);
     syncPanels();
   },
 });
@@ -76,6 +76,7 @@ sidebar.append(moleculeList.root, movementControls.root);
 function syncPanels() {
   moleculeList.render(viewer.getMolecules());
   movementControls.setSelected(viewer.getSelectedMoleculeName());
+  movementControls.setMode(viewer.getTransformMode());
 }
 
 mountXRButtons();

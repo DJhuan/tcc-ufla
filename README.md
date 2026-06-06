@@ -16,7 +16,7 @@ Legenda
 - [🟡] Protvr:
   - [🔴] Corrigir visualização usando VR;
   - [🔴] Buscar algoritmo de ligação entre átomos;
-  - [🔴] Adicionar controles de rotação;
+  - [🟢] Adicionar controles de rotação;
   - [🔴] Migrar para framework frontend (?).
 
 - [🟡] Escrita

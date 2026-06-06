@@ -4,34 +4,15 @@
     font-size: 0.85rem;
 }
 
-.movement-panel__step {
+.transform-panel__modes {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
     gap: 12px;
-    margin: 0 14px 10px;
-    color: #cbd5e1;
-    font-size: 0.85rem;
-}
-
-.movement-panel__step input {
-    width: 88px;
-    padding: 8px 10px;
-    border-radius: 10px;
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    background: rgba(15, 23, 42, 0.8);
-    color: #e2e8f0;
-}
-
-.movement-panel__pad {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
     padding: 0 14px 14px;
 }
 
 .movement-panel__button {
-    min-height: 46px;
+    min-height: 42px;
+    padding: 0 14px;
     border: none;
     border-radius: 12px;
     background: linear-gradient(135deg, #334155, #1e293b);
@@ -45,7 +26,12 @@
     filter: brightness(1.08);
 }
 
-.movement-panel.is-disabled .movement-panel__button,
-.movement-panel.is-disabled .movement-panel__step input {
+.movement-panel__button.is-active {
+    background: linear-gradient(135deg, #0f766e, #115e59);
+    box-shadow: 0 10px 24px rgba(15, 118, 110, 0.28);
+}
+
+.movement-panel.is-disabled .transform-panel__modes {
     opacity: 0.55;
+    pointer-events: none;
 }
