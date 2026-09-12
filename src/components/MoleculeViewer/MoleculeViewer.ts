@@ -64,7 +64,8 @@ export class MoleculeViewer {
       0.1,
       1000,
     );
-    this.camera.position.z = 1;
+    this.camera.position.z = 2;
+    this.camera.position.y = 1;
 
     // Renderizador - Objeto do DOM para renderizar a cena;
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -111,9 +112,8 @@ export class MoleculeViewer {
     // Grid para facilitar a localização;
     const size = 10;
     const divisions = 10;
-    const gridHelper = new THREE.GridHelper( size, divisions );
-    this.scene.add( gridHelper );
-
+    const gridHelper = new THREE.GridHelper(size, divisions);
+    this.scene.add(gridHelper);
 
     // Eventos e loop de renderização;
     window.addEventListener("resize", this.handleResize);
@@ -445,11 +445,12 @@ export class MoleculeViewer {
       shader.vertexShader = shader.vertexShader.replace(
         "#include <begin_vertex>",
         `#include <begin_vertex>
-        transformed += normalize(normal) * outlineThickness;`
+        transformed += normalize(normal) * outlineThickness;`,
       );
     };
 
-    material.customProgramCacheKey = () => `outline-${outlineColor}-${thickness}`;
+    material.customProgramCacheKey = () =>
+      `outline-${outlineColor}-${thickness}`;
     return material;
   }
 
