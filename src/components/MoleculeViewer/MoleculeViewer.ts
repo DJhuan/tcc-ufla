@@ -5,7 +5,7 @@ import { ARButton } from "three/addons/webxr/ARButton.js";
 import { VRButton } from "three/addons/webxr/VRButton.js";
 import { PDBLoader } from "three/addons/loaders/PDBLoader.js";
 import { ELEMENT_COLORS, ELEMENT_RADII } from "./Constants";
-import { XRControllerManager } from "./XRControllerManager";
+import { XRControllerManager } from "../../core/XRControllerManager";
 
 export type TransformMode = "translate" | "rotate";
 
