@@ -23,5 +23,13 @@ dist-ssr
 *.sln
 *.sw?
 
+# Sensitive data
+*.pem
+*.crt
+*.p12
+*.pfx
+*.key
+.env
+
 # Sandbox
 sandbox/*
