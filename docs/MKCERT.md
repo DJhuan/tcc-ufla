@@ -1,4 +1,4 @@
-Passos rápidos para gerar certificados com `mkcert` e rodar o dev server em HTTPS
+# Passos rápidos para gerar certificados com `mkcert` e rodar o dev server em HTTPS
 
 1. Instale o `mkcert` (exemplo macOS/Homebrew):
 
