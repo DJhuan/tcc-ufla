@@ -43,10 +43,15 @@ export function createMoleculeList(options: {
     }
 
     for (const item of items) {
-      const row = document.createElement("button");
-      row.type = "button";
+      const row = document.createElement("div");
       row.className = `molecule-list__item${item.selected ? " is-selected" : ""}`;
-      row.addEventListener("click", () => options.onSelect(item.id));
+      row.setAttribute("role", "listitem");
+
+      const selectBtn = document.createElement("button");
+      selectBtn.type = "button";
+      selectBtn.className = "molecule-list__select-btn";
+      selectBtn.setAttribute("aria-pressed", item.selected ? "true" : "false");
+      selectBtn.addEventListener("click", () => options.onSelect(item.id));
 
       const info = document.createElement("div");
       info.className = "molecule-list__item-info";
@@ -59,17 +64,17 @@ export function createMoleculeList(options: {
       status.className = "molecule-list__item-status";
       status.textContent = item.selected ? "Selecionada" : "Disponível";
 
-      const actions = document.createElement("button");
-      actions.type = "button";
-      actions.className = "molecule-list__remove";
-      actions.textContent = "Remover";
-      actions.addEventListener("click", (event) => {
-        event.stopPropagation();
-        options.onRemove(item.id);
-      });
-
       info.append(name, status);
-      row.append(info, actions);
+      selectBtn.append(info);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "molecule-list__remove";
+      removeBtn.textContent = "Remover";
+      removeBtn.setAttribute("aria-label", `Remover ${item.name}`);
+      removeBtn.addEventListener("click", () => options.onRemove(item.id));
+
+      row.append(selectBtn, removeBtn);
       list.append(row);
     }
   }

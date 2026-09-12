@@ -100,3 +100,24 @@
 .molecule-list__remove:hover {
     background: rgba(220, 38, 38, 0.96);
 }
+
+.molecule-list__select-btn {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.molecule-list__select-btn:focus-visible {
+    outline: 2px solid rgba(96, 165, 250, 0.7);
+    outline-offset: 4px;
+    border-radius: 6px;
+}
