@@ -421,16 +421,14 @@ export class MoleculeViewer {
       const mesh = child as THREE.Mesh;
       if (!mesh.isMesh) return;
 
-      mesh.material = outlineMaterial.clone();
-      mesh.material.needsUpdate = true;
+      mesh.material = outlineMaterial;
     });
 
-    outline.scale.multiplyScalar(1.01);
     outline.renderOrder = 0;
     return outline;
   }
 
-  private createOutlineMaterial(outlineColor: number) {
+  private createOutlineMaterial(outlineColor: number, thickness = 0.04) {
     const material = new THREE.MeshBasicMaterial({
       color: outlineColor,
       side: THREE.BackSide,
@@ -440,14 +438,18 @@ export class MoleculeViewer {
     });
 
     material.onBeforeCompile = (shader) => {
-      shader.uniforms.outlineThickness = { value: 0.025 };
+      shader.uniforms.outlineThickness = { value: thickness };
+
+      shader.vertexShader = `uniform float outlineThickness;\n${shader.vertexShader}`;
+
       shader.vertexShader = shader.vertexShader.replace(
         "#include <begin_vertex>",
-        "#include <begin_vertex>\n      transformed += normalize(normal) * outlineThickness;",
+        `#include <begin_vertex>
+        transformed += normalize(normal) * outlineThickness;`
       );
     };
 
-    material.customProgramCacheKey = () => `outline-${outlineColor}`;
+    material.customProgramCacheKey = () => `outline-${outlineColor}-${thickness}`;
     return material;
   }
 
