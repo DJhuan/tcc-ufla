@@ -5,6 +5,7 @@ import { ARButton } from "three/addons/webxr/ARButton.js";
 import { VRButton } from "three/addons/webxr/VRButton.js";
 import { PDBLoader } from "three/addons/loaders/PDBLoader.js";
 import { ELEMENT_COLORS, ELEMENT_RADII } from "./Constants";
+import { XRControllerManager } from "./XRControllerManager";
 
 export type TransformMode = "translate" | "rotate";
 
@@ -41,6 +42,8 @@ export class MoleculeViewer {
   private readonly arDistance = 1.5;
   private transformMode: TransformMode = "translate";
   private isApplyingPresentation = false;
+
+  private readonly xrControllerManager: XRControllerManager;
 
   public constructor(container: HTMLElement) {
     this.container = container;
@@ -100,9 +103,13 @@ export class MoleculeViewer {
       this.handleTransformObjectChange,
     );
     this.scene.add(this.transformControls.getHelper());
-    this.setupXRControllers();
 
     // Configurações para WebXR;
+    this.xrControllerManager = new XRControllerManager(
+      this.renderer,
+      this.scene,
+      this.transformControls,
+    );
     this.renderer.xr.addEventListener(
       "sessionstart",
       this.handleXRSessionStart,
@@ -232,6 +239,7 @@ export class MoleculeViewer {
 
   private renderLoop = () => {
     this.controls.update();
+    this.xrControllerManager.update();
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -325,45 +333,13 @@ export class MoleculeViewer {
     return session?.environmentBlendMode !== "opaque";
   }
 
-  private setupXRControllers() {
-    for (let index = 0; index < 2; index += 1) {
-      const controller = this.renderer.xr.getController(index);
-      controller.userData.active = false;
-      controller.addEventListener("selectstart", this.handleXRControllerEvent);
-      controller.addEventListener("selectend", this.handleXRControllerEvent);
-      controller.addEventListener("move", this.handleXRControllerEvent);
-      this.scene.add(controller);
-    }
+  public dispose() {
+    window.removeEventListener("resize", this.handleResize);
+    this.xrControllerManager.dispose();
+    this.controls.dispose();
+    this.transformControls.dispose();
+    this.renderer.dispose();
   }
-
-  private handleXRControllerEvent = (event: any) => {
-    const controller = event.target as THREE.Group | null;
-    if (
-      !controller ||
-      (controller.userData.active === false && event.type !== "selectstart")
-    ) {
-      return;
-    }
-
-    this.transformControls
-      .getRaycaster()
-      .setFromXRController(controller as any);
-
-    switch (event.type) {
-      case "selectstart":
-        controller.userData.active = true;
-        this.transformControls.pointerDown(null);
-        break;
-      case "selectend":
-        this.transformControls.pointerUp(null);
-        controller.userData.active = false;
-        break;
-      case "move":
-        this.transformControls.pointerHover(null);
-        this.transformControls.pointerMove(null);
-        break;
-    }
-  };
 
   private syncTransformControlsTarget() {
     const current = this.getCurrentMolecule();
