@@ -179,9 +179,6 @@ export class MoleculeViewer {
 
     this.currentMoleculeId = id;
     this.syncTransformControlsTarget();
-    if (this.isARSession()) {
-      this.applyARPresentation();
-    }
   }
 
   public removeMolecule(id: string) {
@@ -352,24 +349,41 @@ export class MoleculeViewer {
   }
 
   private applyARPresentation() {
-    const current = this.getCurrentMolecule();
-    if (!current) return;
+    if (this.molecules.size === 0) return;
 
     this.isApplyingPresentation = true;
-    current.object.scale.copy(current.scale).multiplyScalar(this.arScaleFactor);
-    current.object.position.set(0, 0, -this.arDistance);
-    current.object.quaternion.copy(current.quaternion);
+    const arCenterOffset = new THREE.Vector3(0, 0, -this.arDistance);
+
+    for (const molecule of this.molecules.values()) {
+      molecule.object.scale
+        .copy(molecule.scale)
+        .multiplyScalar(this.arScaleFactor);
+
+      molecule.object.position
+        .copy(molecule.position)
+        .multiplyScalar(this.arScaleFactor)
+        .add(arCenterOffset);
+
+      molecule.object.quaternion.copy(molecule.quaternion);
+    }
+
     this.isApplyingPresentation = false;
   }
 
   private resetMoleculePresentation() {
-    const current = this.getCurrentMolecule();
-    if (!current) return;
+    if (this.molecules.size === 0) return;
 
     this.isApplyingPresentation = true;
-    current.object.scale.copy(current.scale);
-    current.object.position.copy(current.position);
-    current.object.quaternion.copy(current.quaternion);
+
+    for (const molecule of this.molecules.values()) {
+      molecule.object.scale.copy(molecule.scale);
+      molecule.object.position
+        .copy(molecule.position)
+        .multiplyScalar(this.arScaleFactor)
+        .add(new THREE.Vector3(0, 0, -this.arDistance));
+      molecule.object.quaternion.copy(molecule.quaternion);
+    }
+
     this.isApplyingPresentation = false;
   }
 
