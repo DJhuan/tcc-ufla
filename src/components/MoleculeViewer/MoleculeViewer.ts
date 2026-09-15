@@ -572,9 +572,8 @@ export class MoleculeViewer {
     const bondsData = pdb.json?.bonds ?? null;
 
     if (bondsData && Array.isArray(bondsData)) {
-      for (const bond of bondsData) {
-        const i = bond[0] ?? null;
-        const j = bond[1] ?? null;
+      for (let bi=0; bi < bondsData.length; bi++) {
+        const [i, j] = [bondsData[bi][0], bondsData[bi][1]];
         if (i == null || j == null) continue;
 
         const start = atoms[i]?.pos;
