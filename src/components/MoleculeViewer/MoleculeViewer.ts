@@ -6,7 +6,7 @@ import { VRButton } from "three/addons/webxr/VRButton.js";
 import { PDBLoader } from "three/addons/loaders/PDBLoader.js";
 import { ELEMENT_COLORS, ELEMENT_RADII } from "./Constants";
 import { XRControllerManager } from "../../core/XRControllerManager";
-import type { PDBStructure } from "../../types/pdb";
+import type { PDBStructure } from "../../domain/types/pdb";
 
 export type TransformMode = "translate" | "rotate";
 
