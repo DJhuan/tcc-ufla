@@ -6,6 +6,7 @@ import { VRButton } from "three/addons/webxr/VRButton.js";
 import { PDBLoader } from "three/addons/loaders/PDBLoader.js";
 import { ELEMENT_COLORS, ELEMENT_RADII } from "./Constants";
 import { XRControllerManager } from "../../core/XRControllerManager";
+import type { PDBStructure } from "../../types/pdb";
 
 export type TransformMode = "translate" | "rotate";
 
@@ -94,7 +95,7 @@ export class MoleculeViewer {
     this.transformControls.setSize(0.9);
     this.transformControls.addEventListener(
       "dragging-changed",
-      (event: any) => {
+      (event) => {
         this.controls.enabled = !event.value;
       },
     );
@@ -267,7 +268,7 @@ export class MoleculeViewer {
 
     this.renderer.xr.enabled = true;
     // VRButton.createButton retorna um HTMLElement
-    const button = VRButton.createButton(this.renderer as any);
+    const button = VRButton.createButton(this.renderer);
     button.classList.add("xr-button", "xr-button--vr");
     return button;
   }
@@ -278,7 +279,7 @@ export class MoleculeViewer {
     if (!supported) return null;
 
     this.renderer.xr.enabled = true;
-    const button = ARButton.createButton(this.renderer as any);
+    const button = ARButton.createButton(this.renderer);
     button.classList.add("xr-button", "xr-button--ar");
     return button;
   }
@@ -451,11 +452,11 @@ export class MoleculeViewer {
   }
 
   private async createMoleculeFromPdb(filepath: string) {
-    const pdb = await this.loader.loadAsync(filepath);
+    const pdb = (await this.loader.loadAsync(filepath)) as unknown as PDBStructure;
     const geometryAtoms = pdb.geometryAtoms;
     const geometryBonds = pdb.geometryBonds;
     const positions = geometryAtoms.attributes.position.array as Float32Array;
-    const atomsData = (pdb as any).json?.atoms || (pdb as any).atoms || null;
+    const atomsData = pdb.json?.atoms ?? null;
 
     const atoms: AtomPosition[] = [];
     for (let i = 0; i < positions.length; i += 3) {
@@ -465,12 +466,8 @@ export class MoleculeViewer {
         positions[i + 1],
         positions[i + 2],
       );
-      let element: string | null = null;
-
-      if (atomsData && atomsData[idx]) {
-        const atom = atomsData[idx];
-        element = atom.element || atom.elem || atom[4] || atom.atom || null;
-      }
+      const atom = atomsData?.[idx];
+      const element = atom?.[4] ?? null;
 
       atoms.push({ pos, element });
     }
@@ -566,18 +563,18 @@ export class MoleculeViewer {
   }
 
   private collectBonds(
-    pdb: any,
+    pdb: PDBStructure,
     atoms: AtomPosition[],
     geometryBonds: THREE.BufferGeometry,
     center: THREE.Vector3,
   ) {
     const bonds: Array<[THREE.Vector3, THREE.Vector3]> = [];
-    const bondsData = pdb.json?.bonds || pdb.bonds || null;
+    const bondsData = pdb.json?.bonds ?? null;
 
     if (bondsData && Array.isArray(bondsData)) {
       for (const bond of bondsData) {
-        const i = bond[0] ?? bond.i ?? bond.a ?? null;
-        const j = bond[1] ?? bond.j ?? bond.b ?? null;
+        const i = bond[0] ?? null;
+        const j = bond[1] ?? null;
         if (i == null || j == null) continue;
 
         const start = atoms[i]?.pos;

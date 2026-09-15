@@ -70,7 +70,7 @@ export class XRControllerManager {
         .setFromXRController(targetRay);
       this.transformControls.pointerHover(null);
 
-      if ((this.transformControls as any).axis !== null) {
+      if (this.transformControls.axis !== null) {
         break;
       }
     }
