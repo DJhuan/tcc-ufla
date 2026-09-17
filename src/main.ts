@@ -27,7 +27,7 @@ const viewer = new MoleculeViewer(viewerHost);
 // Botões para funções moleculares;
 const uploadControl = createUploadMolecule(async (file) => {
   try {
-    await viewer.loadFromFile(file);
+    await viewer.loadMoleculeFromFile(file);
     syncPanels();
   } catch (error) {
     console.error("Erro ao carregar molécula enviada:", error);
@@ -83,8 +83,8 @@ mountXRButtons();
 
 // Carregar molécula inicial (ATP) para demonstração;
 viewer
-  .loadFromUrl("/assets/ATP.pdb")
+  .loadMoleculeFromUrl("/assets/ATP.pdb")
   .then(() => syncPanels())
-  .catch((error) => {
+  .catch((error: unknown) => {
     console.error("Erro ao carregar molécula inicial:", error);
   });
