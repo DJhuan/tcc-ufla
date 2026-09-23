@@ -26,4 +26,36 @@ const ELEMENT_RADII: Record<string, number> = {
   P: 0.6,
 };
 
-export { ELEMENT_COLORS, ELEMENT_RADII };
+/**
+ * Raios Covalentes (em Ångströms) baseados em Cordero et al. (2008).
+ * Utilizados para inferência de conectividade e ligações químicas.
+ */
+
+const COVALENT_RADII: Record<string, number> = {
+  H: 0.31,
+  HE: 0.28,
+  LI: 1.28,
+  BE: 0.96,
+  B: 0.84,
+  C: 0.76,
+  N: 0.71,
+  O: 0.66,
+  F: 0.57,
+  NE: 0.58,
+  NA: 1.66,
+  MG: 1.41,
+  AL: 1.21,
+  SI: 1.11,
+  P: 1.07,
+  S: 1.05,
+  CL: 1.02,
+  AR: 1.06,
+  K: 2.03,
+  CA: 1.76,
+  FE: 1.32,
+  BR: 1.2,
+  I: 1.39,
+  DEFAULT: 0.75, // Fallback para elementos raros não listados
+};
+
+export { ELEMENT_COLORS, ELEMENT_RADII, COVALENT_RADII };
