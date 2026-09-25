@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { PDBLoader } from "three/addons/loaders/PDBLoader.js";
 import type { IMoleculeParser } from "../../domain/IMoleculeParser";
-import type { Atom, Bond, MoleculeData } from "../../domain/types/molecule";
+import type { Atom, MoleculeData } from "../../domain/types/molecule";
 import type { PDBStructure } from "../../domain/types/pdb";
+import { BondCalculator } from "../BondCalculator";
 
 /**
  * Exemplo de arquivo PDB:
@@ -14,6 +15,7 @@ import type { PDBStructure } from "../../domain/types/pdb";
 export class PDBParser implements IMoleculeParser {
   public readonly supportedExtensions = [".pdb", ".ent"];
   private readonly loader = new PDBLoader();
+  private readonly bondCalculator = new BondCalculator();
 
   public parse(content: string, name: string): MoleculeData {
     const parsed = this.loader.parse(content) as unknown as PDBStructure;
@@ -53,55 +55,12 @@ export class PDBParser implements IMoleculeParser {
       }
     }
 
-    const bonds = this.parseBonds(content, atoms.length);
+    const bonds = this.bondCalculator.findBonds(atoms);
 
     return {
       name,
       atoms,
       bonds,
     };
-  }
-
-  private parseBonds(content: string, totalAtoms: number): Bond[] {
-    const bonds: Bond[] = [];
-    const bondSet = new Set<string>();
-    const lines = content.split("\n");
-
-    for (let li = 0; li < lines.length; li++) {
-      const line = lines[li];
-      if (!line.startsWith("CONECT")) continue;
-
-      const sourceSerial = parseInt(line.slice(6, 11).trim(), 10);
-      if (isNaN(sourceSerial)) continue;
-
-      const targets = [
-        parseInt(line.slice(11, 16).trim(), 10),
-        parseInt(line.slice(16, 21).trim(), 10),
-        parseInt(line.slice(21, 26).trim(), 10),
-        parseInt(line.slice(26, 31).trim(), 10),
-      ];
-
-      for (let tsi = 0; tsi < targets.length; tsi++) {
-        const targetSerial = targets[tsi];
-        if (isNaN(targetSerial)) continue;
-
-        const i = sourceSerial - 1;
-        const j = targetSerial - 1;
-
-        if (i < 0 || i >= totalAtoms || j < 0 || j >= totalAtoms) continue;
-
-        const key = i < j ? `${i}-${j}` : `${j}-${i}`;
-        if (!bondSet.has(key)) {
-          bondSet.add(key);
-          bonds.push({
-            startAtomIndex: Math.min(i, j),
-            endAtomIndex: Math.max(i, j),
-            order: 1,
-          });
-        }
-      }
-    }
-
-    return bonds;
   }
 }
