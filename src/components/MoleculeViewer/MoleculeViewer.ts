@@ -9,10 +9,15 @@ import type { IMoleculeParser } from "../../domain/IMoleculeParser";
 import { PDBParser } from "../../core/parsers/PDBParser";
 import type { IMoleculeBuilder } from "../../domain/IMoleculeBuilder";
 import { BallAndStickBuilder } from "../../core/builders/BallAndStickBuilder";
+import { MoleculeStore, type TransformMode } from "../../state/MoleculeStore";
 
-export type TransformMode = "translate" | "rotate";
+export type { TransformMode } from "../../state/MoleculeStore";
+export { MoleculeStore } from "../../state/MoleculeStore";
 
 export class MoleculeViewer {
+  // Repositório de estado reativo de moléculas;
+  public readonly store: MoleculeStore;
+
   // Espaço 3D;
   public readonly scene: THREE.Scene;
   public readonly camera: THREE.PerspectiveCamera;
@@ -27,20 +32,18 @@ export class MoleculeViewer {
   // HTML;
   private readonly container: HTMLElement;
   private moleculeSequence = 0;
-  private transformMode: TransformMode = "translate";
 
   // Controle do VR;
   private readonly xrControllerManager: XRControllerManager;
   private isApplyingPresentation = false;
 
-  // Controle de moléculas;
-  private readonly molecules = new Map<string, MoleculeRecord>();
-  private currentMoleculeId: string | null = null;
+  // Parser e construtor;
   private parser: IMoleculeParser = new PDBParser();
   private builder: IMoleculeBuilder = new BallAndStickBuilder();
 
   public constructor(container: HTMLElement) {
     this.container = container;
+    this.store = new MoleculeStore();
 
     // Configuração da cena;
     this.scene = new THREE.Scene();
@@ -83,7 +86,7 @@ export class MoleculeViewer {
       this.camera,
       this.renderer.domElement,
     );
-    this.transformControls.setMode(this.transformMode);
+    this.transformControls.setMode(this.store.getTransformMode());
     this.transformControls.setSpace("world");
     this.transformControls.setSize(0.9);
     this.transformControls.addEventListener("dragging-changed", (event) => {
@@ -94,6 +97,26 @@ export class MoleculeViewer {
       this.handleTransformObjectChange,
     );
     this.scene.add(this.transformControls.getHelper());
+
+    // Reagir a eventos do repositório de moléculas;
+    this.store.addEventListener("molecule-selected", () => {
+      this.syncTransformControlsTarget();
+      if (this.isARSession()) {
+        this.applyARPresentation();
+      }
+    });
+
+    this.store.addEventListener("molecule-removed", (event) => {
+      const { record } = event.detail;
+      this.scene.remove(record.object);
+      this.disposeObject3D(record.object);
+    });
+
+    this.store.addEventListener("transform-mode-changed", (event) => {
+      const { mode } = event.detail;
+      this.transformControls.setMode(mode);
+      this.transformControls.setSpace(mode === "rotate" ? "local" : "world");
+    });
 
     // Configurações para WebXR;
     this.xrControllerManager = new XRControllerManager(
@@ -123,52 +146,23 @@ export class MoleculeViewer {
   }
 
   public getMolecules() {
-    return Array.from(this.molecules.values()).map((molecule) => ({
-      id: molecule.id,
-      name: molecule.name,
-      selected: molecule.id === this.currentMoleculeId,
-    }));
+    return this.store.getMolecules();
   }
 
   public getSelectedMoleculeId() {
-    return this.currentMoleculeId;
+    return this.store.getSelectedMoleculeId();
   }
 
   public getSelectedMoleculeName() {
-    const selected = this.currentMoleculeId
-      ? this.molecules.get(this.currentMoleculeId)
-      : null;
-    return selected?.name ?? null;
+    return this.store.getSelectedMoleculeName();
   }
 
   public selectMolecule(id: string) {
-    const molecule = this.molecules.get(id);
-    if (!molecule) return;
-
-    if (this.currentMoleculeId === id) return;
-
-    this.currentMoleculeId = id;
-    this.syncTransformControlsTarget();
+    this.store.selectMolecule(id);
   }
 
-  public removeMolecule(id: string) {
-    const molecule = this.molecules.get(id);
-    if (!molecule) return false;
-
-    this.scene.remove(molecule.object);
-    this.disposeObject3D(molecule.object);
-    this.molecules.delete(id);
-
-    if (this.currentMoleculeId === id) {
-      const next = Array.from(this.molecules.keys()).at(-1) ?? null;
-      this.currentMoleculeId = next;
-      this.syncTransformControlsTarget();
-      if (this.isARSession()) {
-        this.applyARPresentation();
-      }
-    }
-
-    return true;
+  public removeMolecule(id: string): boolean {
+    return this.store.removeMolecule(id) !== null;
   }
 
   public moveSelected(
@@ -185,13 +179,11 @@ export class MoleculeViewer {
   }
 
   public setTransformMode(mode: TransformMode) {
-    this.transformMode = mode;
-    this.transformControls.setMode(mode);
-    this.transformControls.setSpace(mode === "rotate" ? "local" : "world");
+    this.store.setTransformMode(mode);
   }
 
   public getTransformMode() {
-    return this.transformMode;
+    return this.store.getTransformMode();
   }
 
   private handleResize = () => {
@@ -280,13 +272,8 @@ export class MoleculeViewer {
       outlineColor,
     };
 
-    this.molecules.set(id, molecule);
     this.scene.add(wrapper);
-    this.currentMoleculeId = id;
-    this.syncTransformControlsTarget();
-    if (this.isARSession()) {
-      this.applyARPresentation();
-    }
+    this.store.addMolecule(molecule);
 
     return { id, name };
   }
@@ -339,8 +326,7 @@ export class MoleculeViewer {
   }
 
   private getCurrentMolecule() {
-    if (!this.currentMoleculeId) return null;
-    return this.molecules.get(this.currentMoleculeId) ?? null;
+    return this.store.getSelectedRecord();
   }
 
   private isARSession() {
@@ -367,12 +353,12 @@ export class MoleculeViewer {
   }
 
   private applyARPresentation() {
-    if (this.molecules.size === 0) return;
+    if (this.store.size === 0) return;
 
     this.isApplyingPresentation = true;
     const arCenterOffset = new THREE.Vector3(0, 0, -this.arDistance);
 
-    for (const molecule of this.molecules.values()) {
+    for (const molecule of this.store.getAllRecords()) {
       molecule.object.scale
         .copy(molecule.scale)
         .multiplyScalar(this.arScaleFactor);
@@ -389,11 +375,11 @@ export class MoleculeViewer {
   }
 
   private resetMoleculePresentation() {
-    if (this.molecules.size === 0) return;
+    if (this.store.size === 0) return;
 
     this.isApplyingPresentation = true;
 
-    for (const molecule of this.molecules.values()) {
+    for (const molecule of this.store.getAllRecords()) {
       molecule.object.scale.copy(molecule.scale);
       molecule.object.position
         .copy(molecule.position)

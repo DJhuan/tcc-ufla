@@ -1,10 +1,14 @@
 import "./MovementControls.css";
+import type { MoleculeStore, TransformMode } from "../../state/MoleculeStore";
 
-import type { TransformMode } from "./MoleculeViewer";
+export type { TransformMode } from "../../state/MoleculeStore";
 
-export function createMovementControls(options: {
-  onModeChange: (mode: TransformMode) => void;
-}) {
+export interface MovementControlsOptions {
+  store?: MoleculeStore;
+  onModeChange?: (mode: TransformMode) => void;
+}
+
+export function createMovementControls(options: MovementControlsOptions) {
   const root = document.createElement("section");
   root.className = "molecule-panel movement-panel transform-panel";
 
@@ -29,15 +33,27 @@ export function createMovementControls(options: {
 
   const modeButtons = new Map<TransformMode, HTMLButtonElement>();
 
+  function setMode(mode: TransformMode) {
+    modeButtons.forEach((button, currentMode) => {
+      button.classList.toggle("is-active", currentMode === mode);
+    });
+  }
+
+  function handleModeClick(mode: TransformMode) {
+    if (options.onModeChange) {
+      options.onModeChange(mode);
+    } else if (options.store) {
+      options.store.setTransformMode(mode);
+    }
+    setMode(mode);
+  }
+
   function createButton(label: string, mode: TransformMode) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "movement-panel__button transform-panel__mode-button";
     button.textContent = label;
-    button.addEventListener("click", () => {
-      options.onModeChange(mode);
-      setMode(mode);
-    });
+    button.addEventListener("click", () => handleModeClick(mode));
     modeButtons.set(mode, button);
     return button;
   }
@@ -49,22 +65,34 @@ export function createMovementControls(options: {
   header.append(title, subtitle);
   root.append(header, status, modeRow);
 
-  function setMode(mode: TransformMode) {
-    modeButtons.forEach((button, currentMode) => {
-      button.classList.toggle("is-active", currentMode === mode);
-    });
+  function setSelected(name: string | null) {
+    status.textContent = name
+      ? `Selecionada: ${name}`
+      : "Nenhuma molécula selecionada.";
+    root.classList.toggle("is-disabled", !name);
   }
 
-  setMode("translate");
+  if (options.store) {
+    const store = options.store;
+
+    store.addEventListener("molecule-selected", (event) => {
+      setSelected(event.detail.name);
+    });
+
+    store.addEventListener("transform-mode-changed", (event) => {
+      setMode(event.detail.mode);
+    });
+
+    setSelected(store.getSelectedMoleculeName());
+    setMode(store.getTransformMode());
+  } else {
+    setSelected(null);
+    setMode("translate");
+  }
 
   return {
     root,
-    setSelected(name: string | null) {
-      status.textContent = name
-        ? `Selecionada: ${name}`
-        : "Nenhuma molécula selecionada.";
-      root.classList.toggle("is-disabled", !name);
-    },
+    setSelected,
     setMode,
   };
 }

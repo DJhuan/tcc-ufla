@@ -7,7 +7,6 @@ import { createMovementControls } from "./components/MoleculeViewer/MovementCont
 
 // Criar elementos principais da interface;
 const app = document.createElement("div");
-
 app.className = "app-shell";
 document.body.appendChild(app);
 
@@ -28,7 +27,6 @@ const viewer = new MoleculeViewer(viewerHost);
 const uploadControl = createUploadMolecule(async (file) => {
   try {
     await viewer.loadMoleculeFromFile(file);
-    syncPanels();
   } catch (error) {
     console.error("Erro ao carregar molécula enviada:", error);
   }
@@ -36,22 +34,13 @@ const uploadControl = createUploadMolecule(async (file) => {
 
 const downloadButton = createDownloadButton(viewer.scene, "scene");
 
+// Painéis da interface acoplados reativamente ao MoleculeStore;
 const moleculeList = createMoleculeList({
-  onSelect: (id) => {
-    viewer.selectMolecule(id);
-    syncPanels();
-  },
-  onRemove: (id) => {
-    viewer.removeMolecule(id);
-    syncPanels();
-  },
+  store: viewer.store,
 });
 
 const movementControls = createMovementControls({
-  onModeChange: (mode) => {
-    viewer.setTransformMode(mode);
-    syncPanels();
-  },
+  store: viewer.store,
 });
 
 // Botões para funções de realidade estendida (VR/AR);
@@ -69,22 +58,13 @@ async function mountXRButtons() {
   }
 }
 
-// Montar interface e carregar molécula inicial;
+// Montar interface;
 toolbar.append(uploadControl, downloadButton);
 sidebar.append(moleculeList.root, movementControls.root);
-
-function syncPanels() {
-  moleculeList.render(viewer.getMolecules());
-  movementControls.setSelected(viewer.getSelectedMoleculeName());
-  movementControls.setMode(viewer.getTransformMode());
-}
 
 mountXRButtons();
 
 // Carregar molécula inicial (ATP) para demonstração;
-viewer
-  .loadMoleculeFromUrl("/assets/ATP.pdb")
-  .then(() => syncPanels())
-  .catch((error: unknown) => {
-    console.error("Erro ao carregar molécula inicial:", error);
-  });
+viewer.loadMoleculeFromUrl("/assets/ATP.pdb").catch((error: unknown) => {
+  console.error("Erro ao carregar molécula inicial:", error);
+});
