@@ -123,6 +123,7 @@ export class MoleculeViewer {
       this.renderer,
       this.scene,
       this.transformControls,
+      this.store,
     );
     this.renderer.xr.addEventListener(
       "sessionstart",
@@ -214,11 +215,15 @@ export class MoleculeViewer {
   };
 
   private handleXRSessionStart = () => {
+    this.transformControls.camera = this.renderer.xr.getCamera();
+    this.controls.enabled = false;
     if (!this.isARSession()) return;
     this.applyARPresentation();
   };
 
   private handleXRSessionEnd = () => {
+    this.transformControls.camera = this.camera;
+    this.controls.enabled = true;
     this.resetMoleculePresentation();
   };
 
