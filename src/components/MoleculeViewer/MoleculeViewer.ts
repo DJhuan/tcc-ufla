@@ -246,7 +246,16 @@ export class MoleculeViewer {
 
     molecule.position.copy(molecule.object.position);
     molecule.quaternion.copy(molecule.object.quaternion);
-    molecule.scale.copy(molecule.object.scale);
+
+    // Apenas sincroniza escala se o modo ativo do TransformControls for "scale",
+    // normalizando pela escala global para evitar contaminação acumulativa.
+    // Em modo "translate" e "rotate", molecule.scale permanece intacto.
+    if (this.transformControls.getMode() === "scale") {
+      const global = this.store.getGlobalScale();
+      if (global > 0) {
+        molecule.scale.copy(molecule.object.scale).divideScalar(global);
+      }
+    }
   };
 
   private handleXRSessionStart = () => {
@@ -375,13 +384,6 @@ export class MoleculeViewer {
     wrapper.add(outlineObject);
     wrapper.add(object);
 
-    const currentScale = this.store.getGlobalScale();
-    if (this.isARSession()) {
-      wrapper.scale.setScalar(currentScale * this.arScaleFactor);
-    } else {
-      wrapper.scale.setScalar(currentScale);
-    }
-
     const molecule: MoleculeRecord = {
       id,
       name,
@@ -394,6 +396,8 @@ export class MoleculeViewer {
       outlineColor,
       atomCount,
     };
+
+    this.updateMoleculeRenderScale(molecule);
 
     this.scene.add(wrapper);
     this.store.addMolecule(molecule);
@@ -476,19 +480,19 @@ export class MoleculeViewer {
     this.transformControls.attach(current.object);
   }
 
-  private applyGlobalScale(scale: number): void {
+  private updateMoleculeRenderScale(record: MoleculeRecord): void {
+    const global = this.store.getGlobalScale();
+    const factor = this.isARSession() ? global * this.arScaleFactor : global;
+    record.object.scale.copy(record.scale).multiplyScalar(factor);
+  }
+
+  private applyGlobalScale(_scale: number): void {
     if (this.store.size === 0) return;
 
     this.isApplyingPresentation = true;
-    const isAR = this.isARSession();
-    const effectiveScale = isAR ? scale * this.arScaleFactor : scale;
-
     for (const molecule of this.store.getAllRecords()) {
-      molecule.object.scale
-        .copy(molecule.scale)
-        .multiplyScalar(effectiveScale);
+      this.updateMoleculeRenderScale(molecule);
     }
-
     this.isApplyingPresentation = false;
   }
 
@@ -497,12 +501,9 @@ export class MoleculeViewer {
 
     this.isApplyingPresentation = true;
     const arCenterOffset = new THREE.Vector3(0, 0, -this.arDistance);
-    const effectiveScale = this.store.getGlobalScale() * this.arScaleFactor;
 
     for (const molecule of this.store.getAllRecords()) {
-      molecule.object.scale
-        .copy(molecule.scale)
-        .multiplyScalar(effectiveScale);
+      this.updateMoleculeRenderScale(molecule);
 
       molecule.object.position
         .copy(molecule.position)
@@ -519,12 +520,9 @@ export class MoleculeViewer {
     if (this.store.size === 0) return;
 
     this.isApplyingPresentation = true;
-    const effectiveScale = this.store.getGlobalScale();
 
     for (const molecule of this.store.getAllRecords()) {
-      molecule.object.scale
-        .copy(molecule.scale)
-        .multiplyScalar(effectiveScale);
+      this.updateMoleculeRenderScale(molecule);
       molecule.object.position
         .copy(molecule.position)
         .multiplyScalar(this.arScaleFactor)
