@@ -43,18 +43,36 @@ export class BallAndStickBuilder implements IMoleculeBuilder {
       bucket.positions.push(atom.position);
     }
 
-    const sphereGeometry = new THREE.SphereGeometry(1, 16, 12);
+    // Nível de detalhe adaptativo baseado no número de átomos e ligações
+    const totalEntities = data.atoms.length + data.bonds.length;
+    let sphereWidthSegments = 12;
+    let sphereHeightSegments = 8;
+    let cylinderRadialSegments = 6;
+
+    if (totalEntities > 3000) {
+      sphereWidthSegments = 8;
+      sphereHeightSegments = 6;
+      cylinderRadialSegments = 5;
+    } else if (totalEntities < 500) {
+      sphereWidthSegments = 14;
+      sphereHeightSegments = 10;
+      cylinderRadialSegments = 7;
+    }
+
+    const sphereGeometry = new THREE.SphereGeometry(
+      1,
+      sphereWidthSegments,
+      sphereHeightSegments,
+    );
     const dummy = new THREE.Object3D();
 
-    // 2. Malha para elementos;
+    // 2. Malha para elementos (MeshLambertMaterial oferece ganho massivo de fill-rate em GPU móvel)
     atomsByElement.forEach((bucket) => {
       const count = bucket.positions.length;
       if (count === 0) return;
 
-      const material = new THREE.MeshStandardMaterial({
+      const material = new THREE.MeshLambertMaterial({
         color: bucket.color,
-        metalness: 0.1,
-        roughness: 0.8,
       });
 
       const mesh = new THREE.InstancedMesh(sphereGeometry, material, count);
@@ -72,11 +90,14 @@ export class BallAndStickBuilder implements IMoleculeBuilder {
 
     // 3. Malha para ligações;
     if (data.bonds.length > 0) {
-      const bondGeometry = new THREE.CylinderGeometry(1, 1, 1, 8);
-      const bondMaterial = new THREE.MeshStandardMaterial({
+      const bondGeometry = new THREE.CylinderGeometry(
+        1,
+        1,
+        1,
+        cylinderRadialSegments,
+      );
+      const bondMaterial = new THREE.MeshLambertMaterial({
         color: 0x999999,
-        metalness: 0.1,
-        roughness: 0.8,
       });
 
       const bondMesh = new THREE.InstancedMesh(

@@ -37,4 +37,5 @@ export type MoleculeRecord = {
   quaternion: THREE.Quaternion;
   scale: THREE.Vector3;
   outlineColor: number;
+  atomCount: number;
 };

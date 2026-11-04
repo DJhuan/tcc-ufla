@@ -254,6 +254,13 @@ export class MoleculeViewer {
     this.controls.enabled = false;
     this.scene.add(this.vrMenu.group);
     this.vrMenu.repositionInFront(this.renderer.xr.getCamera());
+
+    // Otimização VR: ocultar outlines em moléculas grandes (>1000 átomos)
+    this.updateVRMoleculeOutlines();
+
+    // Ativar Fixed Foveated Rendering se suportado pelo WebXR
+    this.configureFoveation();
+
     if (!this.isARSession()) return;
     this.applyARPresentation();
   };
@@ -262,8 +269,34 @@ export class MoleculeViewer {
     this.transformControls.camera = this.camera;
     this.controls.enabled = true;
     this.scene.remove(this.vrMenu.group);
+
+    // Restaurar visibilidade dos outlines no modo Desktop
+    this.setAllOutlinesVisible(true);
+
     this.resetMoleculePresentation();
   };
+
+  private static readonly VR_OUTLINE_MAX_ATOMS = 1000;
+
+  private setAllOutlinesVisible(visible: boolean): void {
+    for (const molecule of this.store.getAllRecords()) {
+      molecule.outlineObject.visible = visible;
+    }
+  }
+
+  private updateVRMoleculeOutlines(): void {
+    for (const molecule of this.store.getAllRecords()) {
+      molecule.outlineObject.visible =
+        molecule.atomCount <= MoleculeViewer.VR_OUTLINE_MAX_ATOMS;
+    }
+  }
+
+  private configureFoveation(): void {
+    const baseLayer = this.renderer.xr.getBaseLayer();
+    if (baseLayer && "fixedFoveation" in baseLayer) {
+      (baseLayer as { fixedFoveation?: number }).fixedFoveation = 1.0;
+    }
+  }
 
   public async exitXR(): Promise<void> {
     const session = this.renderer.xr.getSession();
@@ -314,10 +347,23 @@ export class MoleculeViewer {
     return button;
   }
 
-  private addMoleculeObject(object: THREE.Object3D, name: string) {
+  private addMoleculeObject(
+    object: THREE.Object3D,
+    name: string,
+    atomCount = 0,
+  ) {
     const id = `molecule-${++this.moleculeSequence}`;
     const outlineColor = this.getOutlineColorForMolecule(this.moleculeSequence);
     const outlineObject = this.createOutlineObject(object, outlineColor);
+
+    // Se estiver em sessão VR/XR imersiva, oculta o outline apenas para moléculas grandes (>1000 átomos)
+    if (
+      this.renderer.xr.isPresenting &&
+      atomCount > MoleculeViewer.VR_OUTLINE_MAX_ATOMS
+    ) {
+      outlineObject.visible = false;
+    }
+
     const wrapper = new THREE.Group();
 
     wrapper.name = `molecule-wrapper-${name}`;
@@ -346,6 +392,7 @@ export class MoleculeViewer {
       quaternion: wrapper.quaternion.clone(),
       scale: new THREE.Vector3(1, 1, 1),
       outlineColor,
+      atomCount,
     };
 
     this.scene.add(wrapper);
@@ -531,7 +578,11 @@ export class MoleculeViewer {
   ): { id: string; name: string } {
     const moleculeData = this.parser.parse(content, name);
     const moleculeGroup = this.builder.build(moleculeData);
-    return this.addMoleculeObject(moleculeGroup, name);
+    return this.addMoleculeObject(
+      moleculeGroup,
+      name,
+      moleculeData.atoms.length,
+    );
   }
 
   private getNameFromSource(source: string) {
