@@ -13,6 +13,7 @@ export type MoleculeEventMap = {
   "molecule-removed": CustomEvent<{ id: string; record: MoleculeRecord }>;
   "molecule-selected": CustomEvent<{ id: string | null; name: string | null }>;
   "transform-mode-changed": CustomEvent<{ mode: TransformMode }>;
+  "global-scale-changed": CustomEvent<{ scale: number }>;
 };
 
 /**
@@ -24,6 +25,10 @@ export class MoleculeStore extends EventTarget {
   private readonly molecules = new Map<string, MoleculeRecord>();
   private currentMoleculeId: string | null = null;
   private transformMode: TransformMode = "translate";
+  private globalScale: number = 1.0;
+
+  public static readonly MIN_SCALE = 0.1;
+  public static readonly MAX_SCALE = 5.0;
 
   public addMolecule(record: MoleculeRecord): void {
     this.molecules.set(record.id, record);
@@ -162,6 +167,36 @@ export class MoleculeStore extends EventTarget {
 
   public getTransformMode(): TransformMode {
     return this.transformMode;
+  }
+
+  public getGlobalScale(): number {
+    return this.globalScale;
+  }
+
+  public setGlobalScale(scale: number): void {
+    const clamped = Math.min(
+      MoleculeStore.MAX_SCALE,
+      Math.max(MoleculeStore.MIN_SCALE, Number(scale.toFixed(2))),
+    );
+
+    if (this.globalScale === clamped) {
+      return;
+    }
+
+    this.globalScale = clamped;
+    this.dispatchEvent(
+      new CustomEvent("global-scale-changed", {
+        detail: { scale: this.globalScale },
+      }),
+    );
+  }
+
+  public adjustGlobalScale(delta: number): void {
+    this.setGlobalScale(this.globalScale + delta);
+  }
+
+  public resetGlobalScale(): void {
+    this.setGlobalScale(1.0);
   }
 
   public get size(): number {

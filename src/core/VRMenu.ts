@@ -1,7 +1,15 @@
 import * as THREE from "three";
-import type { MoleculeStore } from "../state/MoleculeStore";
+import { MoleculeStore } from "../state/MoleculeStore";
 
-export type VRMenuButtonId = "prev" | "next" | "mode" | "center" | "exit";
+export type VRMenuButtonId =
+  | "prev"
+  | "next"
+  | "mode"
+  | "center"
+  | "scale-down"
+  | "scale-reset"
+  | "scale-up"
+  | "exit";
 
 type ButtonBounds = {
   id: VRMenuButtonId;
@@ -30,9 +38,12 @@ export class VRMenu {
   private static readonly BUTTONS: ButtonBounds[] = [
     { id: "prev", x: 20, y: 95, w: 75, h: 58 },
     { id: "next", x: 417, y: 95, w: 75, h: 58 },
-    { id: "mode", x: 20, y: 180, w: 230, h: 68 },
-    { id: "center", x: 262, y: 180, w: 230, h: 68 },
-    { id: "exit", x: 20, y: 280, w: 472, h: 72 },
+    { id: "mode", x: 20, y: 175, w: 230, h: 62 },
+    { id: "center", x: 262, y: 175, w: 230, h: 62 },
+    { id: "scale-down", x: 20, y: 255, w: 85, h: 58 },
+    { id: "scale-reset", x: 115, y: 255, w: 282, h: 58 },
+    { id: "scale-up", x: 407, y: 255, w: 85, h: 58 },
+    { id: "exit", x: 20, y: 335, w: 472, h: 64 },
   ];
 
   public constructor(
@@ -46,7 +57,7 @@ export class VRMenu {
 
     this.canvas = document.createElement("canvas");
     this.canvas.width = 512;
-    this.canvas.height = 380;
+    this.canvas.height = 420;
     const context = this.canvas.getContext("2d");
     if (!context) {
       throw new Error("Não foi possível inicializar Canvas2D para o VRMenu.");
@@ -65,7 +76,7 @@ export class VRMenu {
       depthWrite: false,
     });
 
-    const geometry = new THREE.PlaneGeometry(0.55, 0.41);
+    const geometry = new THREE.PlaneGeometry(0.55, 0.45);
     this.mesh = new THREE.Mesh(geometry, material);
     this.mesh.name = "VRMenuPanel";
 
@@ -82,6 +93,7 @@ export class VRMenu {
     this.store.addEventListener("molecule-added", this.handleStoreChange);
     this.store.addEventListener("molecule-removed", this.handleStoreChange);
     this.store.addEventListener("transform-mode-changed", this.handleStoreChange);
+    this.store.addEventListener("global-scale-changed", this.handleStoreChange);
 
     this.renderCanvas();
   }
@@ -164,6 +176,15 @@ export class VRMenu {
         break;
       case "center":
         this.onCenterMolecule();
+        break;
+      case "scale-down":
+        this.store.adjustGlobalScale(-0.1);
+        break;
+      case "scale-reset":
+        this.store.resetGlobalScale();
+        break;
+      case "scale-up":
+        this.store.adjustGlobalScale(0.1);
         break;
       case "exit":
         this.onExitVR();
@@ -275,9 +296,9 @@ export class VRMenu {
     this.drawButton(
       ctx,
       20,
-      180,
+      175,
       230,
-      68,
+      62,
       modeLabel,
       this.hoveredButtonId === "mode",
       this.clickedButtonId === "mode",
@@ -288,22 +309,63 @@ export class VRMenu {
     this.drawButton(
       ctx,
       262,
-      180,
+      175,
       230,
-      68,
+      62,
       "⌖ Centralizar",
       this.hoveredButtonId === "center",
       this.clickedButtonId === "center",
       false,
     );
 
-    // 5. Botão de Saída VR
+    // 5. Controles de Escala Global
+    const currentScale = this.store.getGlobalScale();
+    const scalePercent = Math.round(currentScale * 100);
+
     this.drawButton(
       ctx,
       20,
-      280,
+      255,
+      85,
+      58,
+      "➖",
+      this.hoveredButtonId === "scale-down",
+      this.clickedButtonId === "scale-down",
+      currentScale <= MoleculeStore.MIN_SCALE,
+    );
+
+    this.drawButton(
+      ctx,
+      115,
+      255,
+      282,
+      58,
+      `Escala: ${currentScale.toFixed(1)}x (${scalePercent}%)`,
+      this.hoveredButtonId === "scale-reset",
+      this.clickedButtonId === "scale-reset",
+      false,
+      "#1e3a5f",
+    );
+
+    this.drawButton(
+      ctx,
+      407,
+      255,
+      85,
+      58,
+      "➕",
+      this.hoveredButtonId === "scale-up",
+      this.clickedButtonId === "scale-up",
+      currentScale >= MoleculeStore.MAX_SCALE,
+    );
+
+    // 6. Botão de Saída VR
+    this.drawButton(
+      ctx,
+      20,
+      335,
       472,
-      72,
+      64,
       "🚪 Sair da Sessão VR",
       this.hoveredButtonId === "exit",
       this.clickedButtonId === "exit",
@@ -399,6 +461,10 @@ export class VRMenu {
     this.store.removeEventListener("molecule-removed", this.handleStoreChange);
     this.store.removeEventListener(
       "transform-mode-changed",
+      this.handleStoreChange,
+    );
+    this.store.removeEventListener(
+      "global-scale-changed",
       this.handleStoreChange,
     );
 
