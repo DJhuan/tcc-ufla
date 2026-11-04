@@ -87,6 +87,45 @@ export class MoleculeStore extends EventTarget {
     );
   }
 
+  public toggleTransformMode(): TransformMode {
+    const nextMode: TransformMode =
+      this.transformMode === "translate" ? "rotate" : "translate";
+    this.setTransformMode(nextMode);
+    return nextMode;
+  }
+
+  public selectNextMolecule(): string | null {
+    const keys = Array.from(this.molecules.keys());
+    if (keys.length === 0) return null;
+    if (keys.length === 1) {
+      this.selectMolecule(keys[0]);
+      return keys[0];
+    }
+    const currentIndex = this.currentMoleculeId
+      ? keys.indexOf(this.currentMoleculeId)
+      : -1;
+    const nextIndex = (currentIndex + 1) % keys.length;
+    const nextId = keys[nextIndex];
+    this.selectMolecule(nextId);
+    return nextId;
+  }
+
+  public selectPreviousMolecule(): string | null {
+    const keys = Array.from(this.molecules.keys());
+    if (keys.length === 0) return null;
+    if (keys.length === 1) {
+      this.selectMolecule(keys[0]);
+      return keys[0];
+    }
+    const currentIndex = this.currentMoleculeId
+      ? keys.indexOf(this.currentMoleculeId)
+      : -1;
+    const prevIndex = (currentIndex - 1 + keys.length) % keys.length;
+    const prevId = keys[prevIndex];
+    this.selectMolecule(prevId);
+    return prevId;
+  }
+
   public getMolecules(): MoleculeListItem[] {
     return Array.from(this.molecules.values()).map((molecule) => ({
       id: molecule.id,

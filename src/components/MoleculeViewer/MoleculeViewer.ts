@@ -10,6 +10,7 @@ import { PDBParser } from "../../core/parsers/PDBParser";
 import type { IMoleculeBuilder } from "../../domain/IMoleculeBuilder";
 import { BallAndStickBuilder } from "../../core/builders/BallAndStickBuilder";
 import { MoleculeStore, type TransformMode } from "../../state/MoleculeStore";
+import { VRMenu } from "../../core/VRMenu";
 
 export type { TransformMode } from "../../state/MoleculeStore";
 export { MoleculeStore } from "../../state/MoleculeStore";
@@ -17,6 +18,9 @@ export { MoleculeStore } from "../../state/MoleculeStore";
 export class MoleculeViewer {
   // Repositório de estado reativo de moléculas;
   public readonly store: MoleculeStore;
+
+  // Painel de interface 3D imersivo para sessões VR;
+  public readonly vrMenu: VRMenu;
 
   // Espaço 3D;
   public readonly scene: THREE.Scene;
@@ -118,12 +122,23 @@ export class MoleculeViewer {
       this.transformControls.setSpace(mode === "rotate" ? "local" : "world");
     });
 
-    // Configurações para WebXR;
+    // Menu 3D e configurações para WebXR;
+    this.vrMenu = new VRMenu(
+      this.store,
+      () => {
+        void this.exitXR();
+      },
+      () => {
+        this.centerSelectedMolecule();
+      },
+    );
+
     this.xrControllerManager = new XRControllerManager(
       this.renderer,
       this.scene,
       this.transformControls,
       this.store,
+      this.vrMenu,
     );
     this.renderer.xr.addEventListener(
       "sessionstart",
@@ -217,6 +232,8 @@ export class MoleculeViewer {
   private handleXRSessionStart = () => {
     this.transformControls.camera = this.renderer.xr.getCamera();
     this.controls.enabled = false;
+    this.scene.add(this.vrMenu.group);
+    this.vrMenu.repositionInFront(this.renderer.xr.getCamera());
     if (!this.isARSession()) return;
     this.applyARPresentation();
   };
@@ -224,8 +241,35 @@ export class MoleculeViewer {
   private handleXRSessionEnd = () => {
     this.transformControls.camera = this.camera;
     this.controls.enabled = true;
+    this.scene.remove(this.vrMenu.group);
     this.resetMoleculePresentation();
   };
+
+  public async exitXR(): Promise<void> {
+    const session = this.renderer.xr.getSession();
+    if (session) {
+      await session.end();
+    }
+  }
+
+  public centerSelectedMolecule(): void {
+    const record = this.getCurrentMolecule();
+    if (!record) return;
+
+    if (this.renderer.xr.isPresenting) {
+      const xrCamera = this.renderer.xr.getCamera();
+      const forward = new THREE.Vector3(0, 0, -1.2);
+      forward.applyQuaternion(xrCamera.quaternion);
+      record.object.position.copy(xrCamera.position).add(forward);
+      record.object.quaternion.identity();
+    } else {
+      record.object.position.set(0, 0, 0);
+      record.object.quaternion.identity();
+    }
+
+    record.position.copy(record.object.position);
+    record.quaternion.copy(record.object.quaternion);
+  }
 
   // Habilita WebXR em modo VR e retorna o botão, se o navegador suportar;
   public async enableXR(): Promise<HTMLElement | null> {
@@ -341,6 +385,7 @@ export class MoleculeViewer {
 
   public dispose() {
     window.removeEventListener("resize", this.handleResize);
+    this.vrMenu.dispose();
     this.xrControllerManager.dispose();
     this.controls.dispose();
     this.transformControls.dispose();

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { TransformControls } from "three/addons/controls/TransformControls.js";
 import type { MoleculeStore } from "../state/MoleculeStore";
+import type { VRMenu } from "./VRMenu";
 
 export type LaserState = "idle" | "hover" | "active";
 
@@ -10,6 +11,11 @@ export type XRControllerData = {
   handedness: XRHandedness;
   rayLine: THREE.Line;
   laserState: LaserState;
+  /**
+   * Flag de debounce para o thumbstick: true enquanto o eixo X
+   * estiver além da deadzone; resetado quando axis retorna ao neutro.
+   */
+  thumbstickFired: boolean;
 };
 
 /**
@@ -17,29 +23,43 @@ export type XRControllerData = {
  * - Trata o ciclo de vida dinâmico de múltiplos controles (connected / disconnected)
  * - Cria feedback visual (mira laser dinâmica: idle, hover, active) para cada controle
  * - Executa leitura contínua de mira e hover do TransformControls frame a frame no renderLoop
+ * - Integra VRMenu: hover de botões via raycaster e clique via selectstart
+ * - Lê Gamepad / Thumbstick para navegar entre moléculas e reposicionar o menu
  */
 export class XRControllerManager {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene: THREE.Scene;
   private readonly transformControls: TransformControls;
   private readonly store?: MoleculeStore;
+  private readonly vrMenu?: VRMenu;
   private readonly moleculeRaycaster = new THREE.Raycaster();
 
   private readonly controllers = new Map<THREE.XRTargetRaySpace, XRControllerData>();
   private interactingController: THREE.XRTargetRaySpace | null = null;
   private readonly targetRaySlots: THREE.XRTargetRaySpace[] = [];
 
+  /** Deadzone para leitura de thumbstick (0–1). */
+  private static readonly THUMBSTICK_DEADZONE = 0.6;
+
+  /** Índice do eixo horizontal do thumbstick esquerdo (Meta Quest / padrão WebXR). */
+  private static readonly THUMBSTICK_AXIS_X = 2;
+
+  /** Índice do botão B (mão direita) / Y (mão esquerda) que reposiciona o menu. */
+  private static readonly MENU_BUTTON_INDEX = 5;
+
   public constructor(
     renderer: THREE.WebGLRenderer,
     scene: THREE.Scene,
     transformControls: TransformControls,
     store?: MoleculeStore,
+    vrMenu?: VRMenu,
     slotCount = 2,
   ) {
     this.renderer = renderer;
     this.scene = scene;
     this.transformControls = transformControls;
     this.store = store;
+    this.vrMenu = vrMenu;
 
     for (let i = 0; i < slotCount; i += 1) {
       const targetRay = this.renderer.xr.getController(i);
@@ -60,6 +80,10 @@ export class XRControllerManager {
       return;
     }
 
+    // --- Gamepad / Thumbstick ---
+    this.updateGamepad();
+
+    // --- Controlador em interação ativa com TransformControls ---
     if (this.interactingController) {
       const interactingData = this.controllers.get(this.interactingController);
       if (interactingData) {
@@ -80,13 +104,28 @@ export class XRControllerManager {
       return;
     }
 
+    // --- Hover: VRMenu + TransformControls gizmo ---
     let hoveredController: THREE.XRTargetRaySpace | null = null;
 
     for (const [targetRay, data] of this.controllers) {
       targetRay.updateMatrixWorld();
-      this.transformControls
-        .getRaycaster()
-        .setFromXRController(targetRay);
+
+      // 1. Testar hover sobre o VRMenu
+      if (this.vrMenu) {
+        this.moleculeRaycaster.setFromXRController(targetRay);
+        const hits = this.moleculeRaycaster.intersectObject(this.vrMenu.mesh);
+        if (hits.length > 0 && hits[0].uv) {
+          this.vrMenu.handlePointerHover(hits[0].uv);
+          hoveredController = targetRay;
+          this.setLaserState(data, "hover");
+          break;
+        } else {
+          this.vrMenu.handlePointerHover(null);
+        }
+      }
+
+      // 2. Testar hover sobre o gizmo do TransformControls
+      this.transformControls.getRaycaster().setFromXRController(targetRay);
       this.transformControls.pointerHover(null);
 
       if (this.transformControls.axis !== null) {
@@ -100,6 +139,51 @@ export class XRControllerManager {
 
     if (!hoveredController) {
       this.transformControls.axis = null;
+    }
+  }
+
+  /**
+   * Lê os gamepads de todos os inputSources ativos na sessão XR.
+   * - Thumbstick eixo X: navegar entre moléculas (com debounce por flick)
+   * - Botão B/Y (índice 5): reposicionar o VRMenu em frente ao usuário
+   */
+  private updateGamepad(): void {
+    const session = this.renderer.xr.getSession();
+    if (!session) return;
+
+    const xrCamera = this.renderer.xr.getCamera();
+
+    for (const inputSource of session.inputSources) {
+      const gamepad = inputSource.gamepad;
+      if (!gamepad) continue;
+
+      const targetRay = this.targetRaySlots[
+        inputSource.handedness === "right" ? 1 : 0
+      ];
+      const data = this.controllers.get(targetRay);
+
+      // Thumbstick eixo X — navegar entre moléculas
+      const axisX = gamepad.axes[XRControllerManager.THUMBSTICK_AXIS_X] ?? 0;
+      const deadzone = XRControllerManager.THUMBSTICK_DEADZONE;
+
+      if (data) {
+        if (Math.abs(axisX) > deadzone && !data.thumbstickFired) {
+          data.thumbstickFired = true;
+          if (axisX > 0) {
+            this.store?.selectNextMolecule();
+          } else {
+            this.store?.selectPreviousMolecule();
+          }
+        } else if (Math.abs(axisX) <= deadzone) {
+          data.thumbstickFired = false;
+        }
+      }
+
+      // Botão B/Y — reposicionar o VRMenu em frente ao headset
+      const menuButton = gamepad.buttons[XRControllerManager.MENU_BUTTON_INDEX];
+      if (menuButton?.pressed) {
+        this.vrMenu?.repositionInFront(xrCamera);
+      }
     }
   }
 
@@ -122,6 +206,7 @@ export class XRControllerManager {
       handedness,
       rayLine,
       laserState: "idle",
+      thumbstickFired: false,
     });
   };
 
@@ -157,9 +242,19 @@ export class XRControllerManager {
     if (this.interactingController) return;
 
     targetRay.updateMatrixWorld();
-    this.transformControls
-      .getRaycaster()
-      .setFromXRController(targetRay);
+
+    // 1. Testar clique no VRMenu (prioridade máxima)
+    if (this.vrMenu) {
+      this.moleculeRaycaster.setFromXRController(targetRay);
+      const hits = this.moleculeRaycaster.intersectObject(this.vrMenu.mesh);
+      if (hits.length > 0 && hits[0].uv) {
+        const consumed = this.vrMenu.handlePointerClick(hits[0].uv);
+        if (consumed) return;
+      }
+    }
+
+    // 2. Testar clique no gizmo do TransformControls
+    this.transformControls.getRaycaster().setFromXRController(targetRay);
     this.transformControls.pointerHover(null);
 
     if (this.transformControls.axis !== null) {
@@ -169,6 +264,7 @@ export class XRControllerManager {
       return;
     }
 
+    // 3. Testar clique em molécula
     if (this.store) {
       this.raycastAndSelectMolecule(targetRay);
     }
@@ -189,11 +285,7 @@ export class XRControllerManager {
   };
 
   private handleSqueezeStart = () => {
-    if (!this.store) return;
-
-    const currentMode = this.store.getTransformMode();
-    const nextMode = currentMode === "translate" ? "rotate" : "translate";
-    this.store.setTransformMode(nextMode);
+    this.store?.toggleTransformMode();
   };
 
   private raycastAndSelectMolecule(targetRay: THREE.XRTargetRaySpace): void {
