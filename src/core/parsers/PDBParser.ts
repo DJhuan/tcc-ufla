@@ -55,12 +55,89 @@ export class PDBParser implements IMoleculeParser {
       }
     }
 
-    const bonds = this.bondCalculator.findBonds(atoms);
+    const calculatedBonds = this.bondCalculator.findBonds(atoms);
+    const bonds = this.mergeBondsWithGeometryBonds(
+      calculatedBonds,
+      parsed.geometryBonds,
+      positions,
+    );
 
     return {
       name,
       atoms,
       bonds,
     };
+  }
+
+  /**
+   * Extrai as ligações em parsed.geometryBonds retornadas pelo PDBLoader do Three.js
+   * (que processa os registros CONECT/ligações atípicas do PDB) e faz merge com as
+   * ligações calculadas por distância, eliminando duplicatas.
+   */
+  private mergeBondsWithGeometryBonds(
+    calculatedBonds: import("../../domain/types/molecule").Bond[],
+    geometryBonds: THREE.BufferGeometry,
+    rawAtomPositions: Float32Array,
+  ): import("../../domain/types/molecule").Bond[] {
+    const bonds = [...calculatedBonds];
+    const bondSet = new Set<string>();
+
+    for (let i = 0; i < calculatedBonds.length; i++) {
+      const b = calculatedBonds[i];
+      const min = Math.min(b.startAtomIndex, b.endAtomIndex);
+      const max = Math.max(b.startAtomIndex, b.endAtomIndex);
+      bondSet.add(`${min}-${max}`);
+    }
+
+    const bondPositions = geometryBonds.getAttribute(
+      "position",
+    ) as THREE.BufferAttribute | undefined;
+    if (!bondPositions || bondPositions.count < 2) {
+      return bonds;
+    }
+
+    // Mapa de coordenadas originais (x,y,z arredondadas em 0,001Å) para índice atômico
+    const coordToAtomIndex = new Map<string, number>();
+    for (let i = 0; i < rawAtomPositions.length; i += 3) {
+      const key = this.getCoordKey(
+        rawAtomPositions[i],
+        rawAtomPositions[i + 1],
+        rawAtomPositions[i + 2],
+      );
+      coordToAtomIndex.set(key, i / 3);
+    }
+
+    const bondArray = bondPositions.array;
+    for (let i = 0; i < bondArray.length; i += 6) {
+      const k1 = this.getCoordKey(bondArray[i], bondArray[i + 1], bondArray[i + 2]);
+      const k2 = this.getCoordKey(
+        bondArray[i + 3],
+        bondArray[i + 4],
+        bondArray[i + 5],
+      );
+
+      const a1 = coordToAtomIndex.get(k1);
+      const a2 = coordToAtomIndex.get(k2);
+
+      if (a1 !== undefined && a2 !== undefined && a1 !== a2) {
+        const min = Math.min(a1, a2);
+        const max = Math.max(a1, a2);
+        const pairKey = `${min}-${max}`;
+
+        if (!bondSet.has(pairKey)) {
+          bondSet.add(pairKey);
+          bonds.push({
+            startAtomIndex: min,
+            endAtomIndex: max,
+          });
+        }
+      }
+    }
+
+    return bonds;
+  }
+
+  private getCoordKey(x: number, y: number, z: number): string {
+    return `${Math.round(x * 1000)},${Math.round(y * 1000)},${Math.round(z * 1000)}`;
   }
 }
