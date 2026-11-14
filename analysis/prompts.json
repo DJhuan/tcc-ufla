@@ -1,0 +1,62 @@
+{
+  "E1": {
+    "D": [
+      "3D molecules in virtual reality with a thin blue laser pointer",
+      "colorful ball-and-stick molecules floating in a dark space with a blue laser line",
+      "spheres and sticks forming a molecule with a faint blue beam in the foreground"
+    ],
+    "S": [
+      "a user idle in a virtual reality molecular viewer",
+      "a person waiting without interacting in a virtual reality molecule app",
+      "a user looking at molecules in virtual reality without touching anything"
+    ]
+  },
+  "E2": {
+    "D": [
+      "an orange laser touching a 3D gizmo attached to a molecule",
+      "an orange beam pointing at colored handles on a ball-and-stick molecule",
+      "a bright orange laser line hitting a colored control handle next to spheres and sticks"
+    ],
+    "S": [
+      "a user aiming at a molecule in virtual reality",
+      "a person pointing a controller at a molecule in virtual reality",
+      "a user about to grab a molecule in a virtual reality viewer"
+    ]
+  },
+  "E3": {
+    "D": [
+      "a green laser dragging colored arrows attached to a molecule",
+      "a green beam connected to red, green and blue arrows on a ball-and-stick molecule",
+      "a bright green laser line pulling a colored arrow next to spheres and sticks"
+    ],
+    "S": [
+      "a user moving a molecule in virtual reality",
+      "a person dragging a molecule to a new position in virtual reality",
+      "a user translating a 3D molecule with a controller in virtual reality"
+    ]
+  },
+  "E4": {
+    "D": [
+      "a green laser dragging colored rings around a molecule",
+      "a green beam connected to red, green and blue circles around a ball-and-stick molecule",
+      "a bright green laser line pulling a colored ring that surrounds spheres and sticks"
+    ],
+    "S": [
+      "a user rotating a molecule in virtual reality",
+      "a person turning a molecule around in virtual reality",
+      "a user spinning a 3D molecule with a controller in virtual reality"
+    ]
+  },
+  "E5": {
+    "D": [
+      "a laser pointing at a floating panel with buttons",
+      "a laser line touching a dark blue rectangular panel with rounded buttons and text",
+      "a floating dark menu with highlighted buttons and a laser beam aimed at it"
+    ],
+    "S": [
+      "a user choosing an option in a virtual reality menu",
+      "a person clicking a button on a virtual reality menu",
+      "a user navigating a floating menu in a virtual reality app"
+    ]
+  }
+}

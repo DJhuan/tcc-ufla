@@ -1,0 +1,7 @@
+# Python 3.10+; ffmpeg/ffprobe precisam estar no PATH (extract_frames.py).
+torch>=2.2
+open_clip_torch>=2.24
+scikit-learn>=1.4
+pandas>=2.1
+matplotlib>=3.8
+pillow>=10.2
