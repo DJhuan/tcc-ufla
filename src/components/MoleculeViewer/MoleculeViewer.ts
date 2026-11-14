@@ -616,6 +616,55 @@ export class MoleculeViewer {
     return this.addMoleculeFromContent(content, file.name, readStart);
   }
 
+  /**
+   * Carrega as URLs em sequência (na ordem dada) e as dispõe lado a lado
+   * no eixo X, centradas na origem, com `gap` unidades entre as caixas
+   * delimitadoras. Com uma única URL, a molécula fica na origem.
+   */
+  public async loadMoleculesSideBySide(
+    urls: readonly string[],
+    gap = 5,
+  ): Promise<Array<{ id: string; name: string }>> {
+    const loaded: Array<{ id: string; name: string }> = [];
+    for (const url of urls) {
+      loaded.push(await this.loadMoleculeFromUrl(url));
+    }
+
+    const records = loaded
+      .map(({ id }) => this.store.getRecord(id))
+      .filter((record): record is MoleculeRecord => record !== null);
+    this.arrangeSideBySide(records, gap);
+
+    return loaded;
+  }
+
+  private arrangeSideBySide(records: MoleculeRecord[], gap: number): void {
+    if (records.length < 2) return;
+
+    const box = new THREE.Box3();
+    const extents = records.map((record) => {
+      record.object.updateMatrixWorld(true);
+      box.setFromObject(record.baseObject);
+      // Limites relativos à posição atual do wrapper;
+      return {
+        minX: box.min.x - record.object.position.x,
+        maxX: box.max.x - record.object.position.x,
+      };
+    });
+
+    const totalWidth =
+      extents.reduce((sum, e) => sum + (e.maxX - e.minX), 0) +
+      gap * (records.length - 1);
+
+    let cursor = -totalWidth / 2;
+    records.forEach((record, i) => {
+      const { minX, maxX } = extents[i];
+      record.object.position.x = cursor - minX;
+      record.position.copy(record.object.position);
+      cursor += maxX - minX + gap;
+    });
+  }
+
   // Content é simplesmente uma String;
   // readStart: instante (performance.now()) em que a leitura do arquivo começou;
   public addMoleculeFromContent(

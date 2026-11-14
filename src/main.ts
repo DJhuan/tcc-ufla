@@ -8,6 +8,7 @@ import { parseExperimentConfig } from "./core/ExperimentConfig";
 import { EventLogger } from "./core/EventLogger";
 import { PerfSampler } from "./core/PerfSampler";
 import { formatLoadMetrics } from "./core/LoadMetrics";
+import { SCENARIOS, SCENARIO_IDS, getScenarioUrls } from "./core/Scenarios";
 import {
   downloadLog,
   exportLog,
@@ -124,7 +125,35 @@ if (logger) {
   toolbar.append(logButtons.root);
 }
 
-// Carregar molécula inicial (ATP) para demonstração;
-viewer.loadMoleculeFromUrl("/assets/ATP.pdb").catch((error: unknown) => {
-  console.error("Erro ao carregar molécula inicial:", error);
-});
+if (experiment.invalidScenario) {
+  console.warn(
+    `[ProtVR] Cenário desconhecido "${experiment.invalidScenario}". ` +
+      `Válidos: ${SCENARIO_IDS.join(", ")}. Carregando a molécula padrão.`,
+  );
+}
+
+if (experiment.scenario) {
+  // Cenário pré-carregado dos experimentos (substitui a molécula inicial);
+  const scenario = SCENARIOS[experiment.scenario];
+  const urls = getScenarioUrls(scenario);
+  logger?.log("scenario-start", { id: scenario.id, files: scenario.files });
+
+  viewer
+    .loadMoleculesSideBySide(urls)
+    .then((loaded) => {
+      logger?.log("scenario-ready", {
+        id: scenario.id,
+        molecules: loaded.map(({ id, name }) => ({ id, name })),
+      });
+      console.info(`[ProtVR] Cenário ${scenario.id}: ${scenario.description}`);
+    })
+    .catch((error: unknown) => {
+      logger?.log("scenario-error", { id: scenario.id, error: String(error) });
+      console.error(`Erro ao carregar o cenário ${scenario.id}:`, error);
+    });
+} else {
+  // Carregar molécula inicial (ATP) para demonstração;
+  viewer.loadMoleculeFromUrl("/assets/ATP.pdb").catch((error: unknown) => {
+    console.error("Erro ao carregar molécula inicial:", error);
+  });
+}
