@@ -4,6 +4,20 @@ import { createDownloadButton } from "./components/Buttons/DownloadButton";
 import { createUploadMolecule } from "./components/Buttons/UploadMolecule";
 import { createMoleculeList } from "./components/MoleculeViewer/MoleculeList";
 import { createMovementControls } from "./components/MoleculeViewer/MovementControls";
+import { createLogExportButtons } from "./components/Buttons/LogExportButton";
+import { parseExperimentConfig } from "./core/ExperimentConfig";
+import { EventLogger } from "./core/EventLogger";
+import {
+  downloadLog,
+  exportLog,
+  listSavedLogs,
+  makeLogFileName,
+  readSavedLog,
+  sendLogToDevServer,
+} from "./core/LogExporter";
+
+// Parâmetros de URL dos experimentos (ver docs/INSTRUMENTACAO.md);
+const experiment = parseExperimentConfig(window.location.search);
 
 // Criar elementos principais da interface;
 const app = document.createElement("div");
@@ -63,6 +77,37 @@ toolbar.append(uploadControl, downloadButton);
 sidebar.append(moleculeList.root, movementControls.root);
 
 mountXRButtons();
+
+// Registro de eventos para os experimentos (somente com ?log=1);
+if (experiment.log) {
+  const logger = new EventLogger(viewer.store, viewer.renderer.xr, {
+    experiment,
+  });
+  viewer.setInteractionObserver(logger);
+
+  const exportCurrentLog = () => {
+    void exportLog(makeLogFileName(Date.now()), logger.toJSON());
+  };
+
+  const logButtons = createLogExportButtons({
+    onExport: exportCurrentLog,
+    onExportSaved: () => {
+      for (const name of listSavedLogs()) {
+        const json = readSavedLog(name);
+        if (!json) continue;
+        void sendLogToDevServer(name, json);
+        downloadLog(name, json);
+      }
+    },
+    getSavedCount: () => listSavedLogs().length,
+  });
+  // Exportação automática ao fim de cada sessão XR;
+  logger.onSessionEnd = () => {
+    exportCurrentLog();
+    logButtons.refresh();
+  };
+  toolbar.append(logButtons.root);
+}
 
 // Carregar molécula inicial (ATP) para demonstração;
 viewer.loadMoleculeFromUrl("/assets/ATP.pdb").catch((error: unknown) => {

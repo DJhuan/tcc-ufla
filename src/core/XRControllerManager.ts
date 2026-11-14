@@ -2,8 +2,13 @@ import * as THREE from "three";
 import type { TransformControls } from "three/addons/controls/TransformControls.js";
 import type { MoleculeStore } from "../state/MoleculeStore";
 import type { VRMenu } from "./VRMenu";
+import type {
+  InteractionObserver,
+  LaserState,
+  PointerTarget,
+} from "./InteractionObserver";
 
-export type LaserState = "idle" | "hover" | "active";
+export type { LaserState, PointerTarget } from "./InteractionObserver";
 
 export type XRControllerData = {
   index: number;
@@ -11,6 +16,8 @@ export type XRControllerData = {
   handedness: XRHandedness;
   rayLine: THREE.Line;
   laserState: LaserState;
+  /** Elemento apontado em hover/active (usado só para instrumentação). */
+  pointerTarget: PointerTarget;
   /**
    * Flag de debounce para o thumbstick: true enquanto o eixo X
    * estiver além da deadzone; resetado quando axis retorna ao neutro.
@@ -37,6 +44,14 @@ export class XRControllerManager {
   private readonly controllers = new Map<THREE.XRTargetRaySpace, XRControllerData>();
   private interactingController: THREE.XRTargetRaySpace | null = null;
   private readonly targetRaySlots: THREE.XRTargetRaySpace[] = [];
+  private observer?: InteractionObserver;
+
+  /** Estado anterior do botão B/Y por mão, para detectar a borda de subida. */
+  private readonly menuButtonWasPressed: Record<XRHandedness, boolean> = {
+    none: false,
+    left: false,
+    right: false,
+  };
 
   /** Deadzone para leitura de thumbstick (0–1). */
   private static readonly THUMBSTICK_DEADZONE = 0.6;
@@ -75,6 +90,11 @@ export class XRControllerManager {
     }
   }
 
+  /** Registra (ou remove) o observador de interações; não altera o comportamento. */
+  public setObserver(observer: InteractionObserver | undefined): void {
+    this.observer = observer;
+  }
+
   public update(): void {
     if (!this.renderer.xr.isPresenting || this.controllers.size === 0) {
       return;
@@ -87,12 +107,12 @@ export class XRControllerManager {
     if (this.interactingController) {
       const interactingData = this.controllers.get(this.interactingController);
       if (interactingData) {
-        this.setLaserState(interactingData, "active");
+        this.setLaserState(interactingData, "active", "gizmo");
       }
 
       for (const [targetRay, data] of this.controllers) {
         if (targetRay !== this.interactingController) {
-          this.setLaserState(data, "idle");
+          this.setLaserState(data, "idle", null);
         }
       }
 
@@ -117,7 +137,7 @@ export class XRControllerManager {
         if (hits.length > 0 && hits[0].uv) {
           this.vrMenu.handlePointerHover(hits[0].uv);
           hoveredController = targetRay;
-          this.setLaserState(data, "hover");
+          this.setLaserState(data, "hover", "menu");
           break;
         } else {
           this.vrMenu.handlePointerHover(null);
@@ -130,10 +150,10 @@ export class XRControllerManager {
 
       if (this.transformControls.axis !== null) {
         hoveredController = targetRay;
-        this.setLaserState(data, "hover");
+        this.setLaserState(data, "hover", "gizmo");
         break;
       } else {
-        this.setLaserState(data, "idle");
+        this.setLaserState(data, "idle", null);
       }
     }
 
@@ -181,9 +201,17 @@ export class XRControllerManager {
 
       // Botão B/Y — reposicionar o VRMenu em frente ao headset
       const menuButton = gamepad.buttons[XRControllerManager.MENU_BUTTON_INDEX];
-      if (menuButton?.pressed) {
+      const menuPressed = menuButton?.pressed === true;
+      if (menuPressed) {
         this.vrMenu?.repositionInFront(xrCamera);
       }
+
+      // Borda de subida do B/Y: um único "sync" por toque (instrumentação)
+      const hand = inputSource.handedness;
+      if (menuPressed && !this.menuButtonWasPressed[hand]) {
+        this.observer?.syncPressed(hand);
+      }
+      this.menuButtonWasPressed[hand] = menuPressed;
     }
   }
 
@@ -206,8 +234,12 @@ export class XRControllerManager {
       handedness,
       rayLine,
       laserState: "idle",
+      pointerTarget: null,
       thumbstickFired: false,
     });
+
+    // Evita perder o primeiro toque do B/Y numa nova sessão
+    this.menuButtonWasPressed[handedness] = false;
   };
 
   private handleDisconnected = (event: THREE.Event) => {
@@ -228,6 +260,14 @@ export class XRControllerManager {
       if (this.interactingController === targetRay) {
         this.transformControls.pointerUp(null);
         this.interactingController = null;
+        this.observer?.dragEnded(
+          controllerData.handedness,
+          this.transformControls.getMode(),
+        );
+      }
+
+      if (controllerData.laserState !== "idle") {
+        this.observer?.laserChanged(controllerData.handedness, "idle", null);
       }
 
       this.controllers.delete(targetRay);
@@ -260,7 +300,11 @@ export class XRControllerManager {
     if (this.transformControls.axis !== null) {
       this.interactingController = targetRay;
       this.transformControls.pointerDown(null);
-      this.setLaserState(controllerData, "active");
+      this.setLaserState(controllerData, "active", "gizmo");
+      this.observer?.dragStarted(
+        controllerData.handedness,
+        this.transformControls.getMode(),
+      );
       return;
     }
 
@@ -279,7 +323,11 @@ export class XRControllerManager {
 
       const data = this.controllers.get(targetRay);
       if (data) {
-        this.setLaserState(data, "idle");
+        this.observer?.dragEnded(
+          data.handedness,
+          this.transformControls.getMode(),
+        );
+        this.setLaserState(data, "idle", null);
       }
     }
   };
@@ -324,8 +372,19 @@ export class XRControllerManager {
     active: [0.2, 1.0, 0.4, 0.1, 0.8, 0.2],
   };
 
-  private setLaserState(data: XRControllerData, state: LaserState): void {
-    if (data.laserState === state) return;
+  private setLaserState(
+    data: XRControllerData,
+    state: LaserState,
+    target: PointerTarget,
+  ): void {
+    const laserChanged = data.laserState !== state;
+    if (!laserChanged && data.pointerTarget === target) return;
+
+    data.pointerTarget = target;
+    this.observer?.laserChanged(data.handedness, state, target);
+
+    // A cor só muda quando o LaserState muda (alvo não altera o visual)
+    if (!laserChanged) return;
     data.laserState = state;
 
     const colorAttr = data.rayLine.geometry.getAttribute(

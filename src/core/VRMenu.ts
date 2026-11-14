@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { MoleculeStore } from "../state/MoleculeStore";
+import type { InteractionObserver } from "./InteractionObserver";
 
 export type VRMenuButtonId =
   | "prev"
@@ -34,6 +35,7 @@ export class VRMenu {
   private hoveredButtonId: VRMenuButtonId | null = null;
   private clickedButtonId: VRMenuButtonId | null = null;
   private clickTimeoutId: number | null = null;
+  private observer?: InteractionObserver;
 
   private static readonly BUTTONS: ButtonBounds[] = [
     { id: "prev", x: 20, y: 95, w: 75, h: 58 },
@@ -102,6 +104,35 @@ export class VRMenu {
     this.renderCanvas();
   };
 
+  /** Registra (ou remove) o observador de interações; não altera o comportamento. */
+  public setObserver(observer: InteractionObserver | undefined): void {
+    this.observer = observer;
+  }
+
+  /** Rótulo legível do botão (sem ícones), usado na instrumentação. */
+  private getButtonLabel(id: VRMenuButtonId): string {
+    switch (id) {
+      case "prev":
+        return "Anterior";
+      case "next":
+        return "Próxima";
+      case "mode":
+        return this.store.getTransformMode() === "translate"
+          ? "Modo: Mover"
+          : "Modo: Girar";
+      case "center":
+        return "Centralizar";
+      case "scale-down":
+        return "Diminuir escala";
+      case "scale-reset":
+        return `Escala: ${this.store.getGlobalScale().toFixed(1)}x`;
+      case "scale-up":
+        return "Aumentar escala";
+      case "exit":
+        return "Sair da Sessão VR";
+    }
+  }
+
   /**
    * Avalia a posição UV do raio laser sobre a face do painel
    * e atualiza o destaque de hover dos botões.
@@ -111,6 +142,7 @@ export class VRMenu {
       if (this.hoveredButtonId !== null) {
         this.hoveredButtonId = null;
         this.renderCanvas();
+        this.observer?.menuButtonHovered(null, null);
       }
       return null;
     }
@@ -130,6 +162,10 @@ export class VRMenu {
     if (newHover !== this.hoveredButtonId) {
       this.hoveredButtonId = newHover;
       this.renderCanvas();
+      this.observer?.menuButtonHovered(
+        newHover,
+        newHover ? this.getButtonLabel(newHover) : null,
+      );
     }
 
     return this.hoveredButtonId;
@@ -153,6 +189,12 @@ export class VRMenu {
     if (!hitButton) {
       return false;
     }
+
+    // Registrado antes da ação, com o rótulo exibido no momento do clique
+    this.observer?.menuButtonClicked(
+      hitButton.id,
+      this.getButtonLabel(hitButton.id),
+    );
 
     // Feedback visual imediato de clique
     this.clickedButtonId = hitButton.id;

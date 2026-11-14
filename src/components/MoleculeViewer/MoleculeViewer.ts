@@ -11,6 +11,7 @@ import type { IMoleculeBuilder } from "../../domain/IMoleculeBuilder";
 import { BallAndStickBuilder } from "../../core/builders/BallAndStickBuilder";
 import { MoleculeStore, type TransformMode } from "../../state/MoleculeStore";
 import { VRMenu } from "../../core/VRMenu";
+import type { InteractionObserver } from "../../core/InteractionObserver";
 
 export type { TransformMode } from "../../state/MoleculeStore";
 export { MoleculeStore } from "../../state/MoleculeStore";
@@ -159,6 +160,15 @@ export class MoleculeViewer {
     // Eventos e loop de renderização;
     window.addEventListener("resize", this.handleResize);
     this.renderer.setAnimationLoop(this.renderLoop);
+  }
+
+  /**
+   * Conecta um observador de interações (ex.: EventLogger) aos controles
+   * XR e ao menu imersivo. Sem observador, nada muda.
+   */
+  public setInteractionObserver(observer: InteractionObserver | undefined) {
+    this.xrControllerManager.setObserver(observer);
+    this.vrMenu.setObserver(observer);
   }
 
   public getContainer(): HTMLElement {
