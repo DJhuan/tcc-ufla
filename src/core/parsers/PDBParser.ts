@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import { PDBLoader } from "three/addons/loaders/PDBLoader.js";
-import type { IMoleculeParser } from "../../domain/IMoleculeParser";
+import type {
+  IMoleculeParser,
+  ParseTimings,
+} from "../../domain/IMoleculeParser";
 import type { Atom, MoleculeData } from "../../domain/types/molecule";
 import type { PDBStructure } from "../../domain/types/pdb";
 import { BondCalculator } from "../BondCalculator";
@@ -17,7 +20,12 @@ export class PDBParser implements IMoleculeParser {
   private readonly loader = new PDBLoader();
   private readonly bondCalculator = new BondCalculator();
 
-  public parse(content: string, name: string): MoleculeData {
+  public parse(
+    content: string,
+    name: string,
+    timings?: ParseTimings,
+  ): MoleculeData {
+    const parseStart = performance.now();
     const parsed = this.loader.parse(content) as unknown as PDBStructure;
     const positions = parsed.geometryAtoms.attributes.position
       .array as Float32Array;
@@ -55,12 +63,18 @@ export class PDBParser implements IMoleculeParser {
       }
     }
 
+    const bondsStart = performance.now();
     const calculatedBonds = this.bondCalculator.findBonds(atoms);
     const bonds = this.mergeBondsWithGeometryBonds(
       calculatedBonds,
       parsed.geometryBonds,
       positions,
     );
+
+    if (timings) {
+      timings.parseMs = bondsStart - parseStart;
+      timings.bondsMs = performance.now() - bondsStart;
+    }
 
     return {
       name,

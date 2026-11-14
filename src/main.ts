@@ -7,6 +7,8 @@ import { createMovementControls } from "./components/MoleculeViewer/MovementCont
 import { createLogExportButtons } from "./components/Buttons/LogExportButton";
 import { parseExperimentConfig } from "./core/ExperimentConfig";
 import { EventLogger } from "./core/EventLogger";
+import { PerfSampler } from "./core/PerfSampler";
+import { formatLoadMetrics } from "./core/LoadMetrics";
 import {
   downloadLog,
   exportLog,
@@ -35,7 +37,9 @@ viewerHost.className = "viewer-host";
 
 app.append(toolbar, viewerHost, sidebar);
 
-const viewer = new MoleculeViewer(viewerHost);
+const viewer = new MoleculeViewer(viewerHost, {
+  instancing: experiment.instancing,
+});
 
 // Botões para funções moleculares;
 const uploadControl = createUploadMolecule(async (file) => {
@@ -78,11 +82,25 @@ sidebar.append(moleculeList.root, movementControls.root);
 
 mountXRButtons();
 
-// Registro de eventos para os experimentos (somente com ?log=1);
-if (experiment.log) {
-  const logger = new EventLogger(viewer.store, viewer.renderer.xr, {
-    experiment,
-  });
+const logger =
+  experiment.log || experiment.perf
+    ? new EventLogger(viewer.store, viewer.renderer.xr, { experiment })
+    : null;
+
+// Tempos de carga: sempre no console; no registro, se ativo;
+viewer.setLoadMetricsListener((metrics) => {
+  console.info(formatLoadMetrics(metrics));
+  logger?.log("load", { ...metrics });
+});
+
+// Amostragem de renderer.info a cada segundo (somente com ?perf=1);
+if (logger && experiment.perf) {
+  viewer.setAfterRenderHook(
+    new PerfSampler(viewer.renderer, logger).afterRender,
+  );
+}
+
+if (logger) {
   viewer.setInteractionObserver(logger);
 
   const exportCurrentLog = () => {

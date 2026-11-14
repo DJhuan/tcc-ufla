@@ -9,12 +9,28 @@ import { ELEMENT_COLORS, ELEMENT_RADII } from "../../domain/Constants";
  * 1. Agrupamento de átomos por elemento químico.
  * 2. Criação de uma malha por elemento.
  * 3. Criação de uma malha para as ligações químicas.
+ *
+ * Com `instancing: false` (experimento de desempenho, ?instancing=0), cria
+ * um THREE.Mesh por átomo e por ligação, compartilhando as mesmas
+ * geometrias e materiais da versão instanciada. Como os átomos são
+ * estáticos dentro do grupo, a matriz local é calculada uma única vez
+ * (matrixAutoUpdate = false).
  */
+
+export type BallAndStickBuilderOptions = {
+  instancing?: boolean;
+};
 
 export class BallAndStickBuilder implements IMoleculeBuilder {
   private static readonly _direction = new THREE.Vector3();
   private static readonly _midpoint = new THREE.Vector3();
   private static readonly _up = new THREE.Vector3(0, 1, 0);
+
+  private readonly instancing: boolean;
+
+  public constructor(options: BallAndStickBuilderOptions = {}) {
+    this.instancing = options.instancing ?? true;
+  }
 
   public build(data: MoleculeData): THREE.Group {
     const group = new THREE.Group();
@@ -75,6 +91,17 @@ export class BallAndStickBuilder implements IMoleculeBuilder {
         color: bucket.color,
       });
 
+      if (!this.instancing) {
+        for (let i = 0; i < count; i++) {
+          const mesh = new THREE.Mesh(sphereGeometry, material);
+          mesh.position.copy(bucket.positions[i]);
+          mesh.scale.setScalar(bucket.radius);
+          this.freeze(mesh);
+          group.add(mesh);
+        }
+        return;
+      }
+
       const mesh = new THREE.InstancedMesh(sphereGeometry, material, count);
 
       for (let i = 0; i < count; i++) {
@@ -100,11 +127,9 @@ export class BallAndStickBuilder implements IMoleculeBuilder {
         color: 0x999999,
       });
 
-      const bondMesh = new THREE.InstancedMesh(
-        bondGeometry,
-        bondMaterial,
-        data.bonds.length,
-      );
+      const bondMesh = this.instancing
+        ? new THREE.InstancedMesh(bondGeometry, bondMaterial, data.bonds.length)
+        : null;
 
       for (let i = 0; i < data.bonds.length; i++) {
         const bond = data.bonds[i];
@@ -121,21 +146,37 @@ export class BallAndStickBuilder implements IMoleculeBuilder {
           .addVectors(start, end)
           .multiplyScalar(0.5);
 
-        dummy.position.copy(BallAndStickBuilder._midpoint);
-        dummy.quaternion.setFromUnitVectors(
+        const target = bondMesh
+          ? dummy
+          : new THREE.Mesh(bondGeometry, bondMaterial);
+
+        target.position.copy(BallAndStickBuilder._midpoint);
+        target.quaternion.setFromUnitVectors(
           BallAndStickBuilder._up,
           BallAndStickBuilder._direction.normalize(),
         );
-        dummy.scale.set(0.12, length, 0.12);
-        dummy.updateMatrix();
+        target.scale.set(0.12, length, 0.12);
 
-        bondMesh.setMatrixAt(i, dummy.matrix);
+        if (bondMesh) {
+          dummy.updateMatrix();
+          bondMesh.setMatrixAt(i, dummy.matrix);
+        } else {
+          this.freeze(target);
+          group.add(target);
+        }
       }
 
-      bondMesh.instanceMatrix.needsUpdate = true;
-      group.add(bondMesh);
+      if (bondMesh) {
+        bondMesh.instanceMatrix.needsUpdate = true;
+        group.add(bondMesh);
+      }
     }
 
     return group;
+  }
+
+  private freeze(object: THREE.Object3D): void {
+    object.matrixAutoUpdate = false;
+    object.updateMatrix();
   }
 }

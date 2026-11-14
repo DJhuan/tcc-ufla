@@ -12,8 +12,15 @@ import { BallAndStickBuilder } from "../../core/builders/BallAndStickBuilder";
 import { MoleculeStore, type TransformMode } from "../../state/MoleculeStore";
 import { VRMenu } from "../../core/VRMenu";
 import type { InteractionObserver } from "../../core/InteractionObserver";
+import type { ParseTimings } from "../../domain/IMoleculeParser";
+import type { LoadMetrics } from "../../core/LoadMetrics";
 
 export type { TransformMode } from "../../state/MoleculeStore";
+
+export type MoleculeViewerOptions = {
+  /** false → um THREE.Mesh por átomo/ligação (?instancing=0). Padrão: true. */
+  instancing?: boolean;
+};
 export { MoleculeStore } from "../../state/MoleculeStore";
 
 export class MoleculeViewer {
@@ -44,10 +51,24 @@ export class MoleculeViewer {
 
   // Parser e construtor;
   private parser: IMoleculeParser = new PDBParser();
-  private builder: IMoleculeBuilder = new BallAndStickBuilder();
+  private builder: IMoleculeBuilder;
+  private readonly instancing: boolean;
 
-  public constructor(container: HTMLElement) {
+  // Instrumentação (experimentos); sem ouvintes, nada é medido nem enfileirado;
+  private loadMetricsListener?: (metrics: LoadMetrics) => void;
+  private afterRenderHook?: () => void;
+  private readonly pendingLoadReports: Array<{
+    addedAt: number;
+    metrics: LoadMetrics;
+  }> = [];
+
+  public constructor(
+    container: HTMLElement,
+    options: MoleculeViewerOptions = {},
+  ) {
     this.container = container;
+    this.instancing = options.instancing ?? true;
+    this.builder = new BallAndStickBuilder({ instancing: this.instancing });
     this.store = new MoleculeStore();
 
     // Configuração da cena;
@@ -171,6 +192,18 @@ export class MoleculeViewer {
     this.vrMenu.setObserver(observer);
   }
 
+  /** Recebe as métricas de carga de cada molécula (após o primeiro render). */
+  public setLoadMetricsListener(
+    listener: ((metrics: LoadMetrics) => void) | undefined,
+  ) {
+    this.loadMetricsListener = listener;
+  }
+
+  /** Função chamada logo após cada renderer.render() (ex.: PerfSampler). */
+  public setAfterRenderHook(hook: (() => void) | undefined) {
+    this.afterRenderHook = hook;
+  }
+
   public getContainer(): HTMLElement {
     return this.container;
   }
@@ -246,6 +279,8 @@ export class MoleculeViewer {
     this.controls.update();
     this.xrControllerManager.update();
     this.renderer.render(this.scene, this.camera);
+    if (this.pendingLoadReports.length > 0) this.flushLoadReports();
+    this.afterRenderHook?.();
   };
 
   private handleTransformObjectChange = () => {
@@ -563,34 +598,79 @@ export class MoleculeViewer {
     url: string,
     name?: string,
   ): Promise<{ id: string; name: string }> {
+    const readStart = performance.now();
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Falha ao baixar arquivo: ${response.statusText}`);
     }
     const content = await response.text();
     const resolvedName = name ?? this.getNameFromSource(url);
-    return this.addMoleculeFromContent(content, resolvedName);
+    return this.addMoleculeFromContent(content, resolvedName, readStart);
   }
 
   public async loadMoleculeFromFile(
     file: File,
   ): Promise<{ id: string; name: string }> {
+    const readStart = performance.now();
     const content = await file.text();
-    return this.addMoleculeFromContent(content, file.name);
+    return this.addMoleculeFromContent(content, file.name, readStart);
   }
 
   // Content é simplesmente uma String;
+  // readStart: instante (performance.now()) em que a leitura do arquivo começou;
   public addMoleculeFromContent(
     content: string,
     name: string,
+    readStart?: number,
   ): { id: string; name: string } {
-    const moleculeData = this.parser.parse(content, name);
+    const parseStart = performance.now();
+    const timings: ParseTimings = { parseMs: 0, bondsMs: 0 };
+    const moleculeData = this.parser.parse(content, name, timings);
+
+    const buildStart = performance.now();
     const moleculeGroup = this.builder.build(moleculeData);
-    return this.addMoleculeObject(
+    const meshCount = moleculeGroup.children.length;
+
+    const sceneStart = performance.now();
+    const result = this.addMoleculeObject(
       moleculeGroup,
       name,
       moleculeData.atoms.length,
     );
+    const sceneEnd = performance.now();
+
+    if (this.loadMetricsListener) {
+      const start = readStart ?? parseStart;
+      this.pendingLoadReports.push({
+        addedAt: sceneEnd,
+        metrics: {
+          name,
+          atoms: moleculeData.atoms.length,
+          bonds: moleculeData.bonds.length,
+          meshes: meshCount,
+          instancing: this.instancing,
+          readMs: parseStart - start,
+          parseMs: timings.parseMs,
+          bondsMs: timings.bondsMs,
+          buildMs: sceneStart - buildStart,
+          sceneMs: sceneEnd - sceneStart,
+          totalMs: sceneEnd - start,
+          firstFrameMs: null,
+        },
+      });
+    }
+
+    return result;
+  }
+
+  /** Emite as métricas de carga pendentes após o primeiro render seguinte. */
+  private flushLoadReports(): void {
+    const now = performance.now();
+    for (const report of this.pendingLoadReports) {
+      report.metrics.firstFrameMs = now - report.addedAt;
+      this.loadMetricsListener?.(report.metrics);
+    }
+    this.pendingLoadReports.length = 0;
   }
 
   private getNameFromSource(source: string) {
