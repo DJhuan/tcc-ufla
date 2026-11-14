@@ -1,6 +1,5 @@
 import "./styles/main.css";
 import { MoleculeViewer } from "./components/MoleculeViewer/MoleculeViewer";
-import { createDownloadButton } from "./components/Buttons/DownloadButton";
 import { createUploadMolecule } from "./components/Buttons/UploadMolecule";
 import { createMoleculeList } from "./components/MoleculeViewer/MoleculeList";
 import { createMovementControls } from "./components/MoleculeViewer/MovementControls";
@@ -50,8 +49,6 @@ const uploadControl = createUploadMolecule(async (file) => {
   }
 });
 
-const downloadButton = createDownloadButton(viewer.scene, "scene");
-
 // Painéis da interface acoplados reativamente ao MoleculeStore;
 const moleculeList = createMoleculeList({
   store: viewer.store,
@@ -77,7 +74,7 @@ async function mountXRButtons() {
 }
 
 // Montar interface;
-toolbar.append(uploadControl, downloadButton);
+toolbar.append(uploadControl);
 sidebar.append(moleculeList.root, movementControls.root);
 
 mountXRButtons();

@@ -1,4 +1,4 @@
-.download-button {
+.log-export-button {
     padding: 10px 14px;
     border: none;
     border-radius: 8px;
@@ -10,13 +10,13 @@
     transition: transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
 }
 
-.download-button:hover {
+.log-export-button:hover {
     transform: translateY(-1px);
     background: #111c33;
     box-shadow: 0 12px 36px rgba(2, 6, 23, 0.3);
 }
 
-.download-button:focus-visible {
+.log-export-button:focus-visible {
     outline: 2px solid rgba(148, 163, 184, 0.8);
     outline-offset: 2px;
 }

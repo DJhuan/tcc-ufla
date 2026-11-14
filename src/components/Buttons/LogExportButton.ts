@@ -1,4 +1,4 @@
-import "./DownloadButton.css";
+import "./LogExportButton.css";
 
 export interface LogExportButtonOptions {
   onExport: () => void;
@@ -17,13 +17,13 @@ export function createLogExportButtons(options: LogExportButtonOptions) {
 
   const exportButton = document.createElement("button");
   exportButton.type = "button";
-  exportButton.className = "download-button";
+  exportButton.className = "log-export-button";
   exportButton.textContent = "Exportar log";
   exportButton.addEventListener("click", () => options.onExport());
 
   const savedButton = document.createElement("button");
   savedButton.type = "button";
-  savedButton.className = "download-button";
+  savedButton.className = "log-export-button";
   savedButton.addEventListener("click", () => {
     options.onExportSaved();
     refresh();
