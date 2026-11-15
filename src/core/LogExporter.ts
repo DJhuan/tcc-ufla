@@ -14,15 +14,38 @@ export function makeLogFileName(epochMs: number): string {
   return `${LOG_STORAGE_PREFIX}${stamp}.json`;
 }
 
-/** (A) Retorna false se o armazenamento falhar (ex.: cota excedida). */
-export function saveLogToLocalStorage(fileName: string, json: string): boolean {
+export type LocalSaveResult = "full" | "entries-only" | "failed";
+
+/** Nome da cópia reduzida (sem `frames`), para não sobrescrever o log completo. */
+export function entriesOnlyName(fileName: string): string {
+  return fileName.replace(/\.json$/, "-entries.json");
+}
+
+function trySetItem(key: string, value: string): boolean {
   try {
-    window.localStorage.setItem(fileName, json);
+    window.localStorage.setItem(key, value);
     return true;
   } catch (error) {
-    console.warn("[ProtVR-log] Falha ao salvar no localStorage:", error);
+    console.warn(`[ProtVR-log] Falha ao salvar ${key} no localStorage:`, error);
     return false;
   }
+}
+
+/**
+ * (A) Salva no localStorage (~5 MB por origem). Se o log completo não
+ * couber (as amostras por quadro ocupam a maior parte), tenta salvar a
+ * versão reduzida `fallback()` (só `entries`) com o sufixo "-entries".
+ */
+export function saveLogToLocalStorage(
+  fileName: string,
+  json: string,
+  fallback?: () => string,
+): LocalSaveResult {
+  if (trySetItem(fileName, json)) return "full";
+  if (fallback && trySetItem(entriesOnlyName(fileName), fallback())) {
+    return "entries-only";
+  }
+  return "failed";
 }
 
 export function listSavedLogs(): string[] {
@@ -83,13 +106,27 @@ export async function sendLogToDevServer(
   }
 }
 
-/** Executa (A), (C) e (B) para um registro. */
-export async function exportLog(fileName: string, json: string): Promise<void> {
-  const stored = saveLogToLocalStorage(fileName, json);
+/**
+ * Executa (A), (C) e (B) para um registro. `entriesOnly` gera a versão sem
+ * `frames`, usada só se o log completo não couber no localStorage.
+ */
+export async function exportLog(
+  fileName: string,
+  json: string,
+  entriesOnly?: () => string,
+): Promise<void> {
+  const stored = saveLogToLocalStorage(fileName, json, entriesOnly);
   const sent = await sendLogToDevServer(fileName, json);
   downloadLog(fileName, json);
+  const sizeMB = (json.length / 1048576).toFixed(2);
+  const storedText =
+    stored === "full"
+      ? "ok"
+      : stored === "entries-only"
+        ? "só entries (log completo não coube)"
+        : "falhou";
   console.info(
-    `[ProtVR-log] ${fileName}: localStorage=${stored ? "ok" : "falhou"}, ` +
+    `[ProtVR-log] ${fileName} (${sizeMB} MB): localStorage=${storedText}, ` +
       `servidor=${sent ? "ok" : "indisponível"}, download disparado.`,
   );
 }

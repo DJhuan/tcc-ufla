@@ -3,7 +3,8 @@
 Scripts em Python 3 para os dois experimentos do TCC:
 
 - avaliação zero-shot com CLIP dos quadros gravados no Quest Pro;
-- resumo de desempenho com o OVR Metrics Tool.
+- resumo de desempenho a partir das amostras por quadro gravadas pela própria
+  aplicação (`?perf=1`).
 
 O passo a passo completo, com os parâmetros de URL e o formato do log, está em
 [`docs/INSTRUMENTACAO.md`](../docs/INSTRUMENTACAO.md).
@@ -14,7 +15,9 @@ O passo a passo completo, com os parâmetros de URL e o formato do log, está em
 cd analysis
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt        # CLIP (torch, open_clip, ...)
+# ou, só para o desempenho:
+pip install -r requirements-perf.txt   # pandas e numpy
 ```
 
 O `ffmpeg` e o `ffprobe` precisam estar no `PATH`. O `torch` instalado pelo
@@ -32,7 +35,7 @@ para o ViT-L/14.
 | `label_frames.py` | Alinha pelo `sync`, rotula com E1–E5, descarta quadros perto de mudanças e balanceia |
 | `prompts.json` | Descrições por estado: conjunto `D` (descritivo) e `S` (semântico), 3 paráfrases cada |
 | `clip_eval.py` | Classificação zero-shot com CLIP e métricas por conjunto × condição × modelo |
-| `perf_summary.py` | Tabela de FPS e tempo de GPU por cenário e condição de instanciamento |
+| `perf_summary.py` | Desempenho por cenário × condição × fase (FPS, dt, cpu, quadros perdidos, chamadas de desenho) e tempos de carga |
 
 ## Experimento 1: CLIP
 
@@ -72,46 +75,27 @@ estados com revocação top-1 ≥ 50% (o acaso é 20%).
 
 ## Experimento 2: desempenho
 
-1. Confira os nomes das colunas do CSV do OVR Metrics Tool:
+Requer logs exportados com `?perf=1` (formato v2, com o campo `frames`) e as
+fases marcadas pelo botão A/X (ver `docs/INSTRUMENTACAO.md`, §8).
 
-   ```bash
-   python perf_summary.py --list-columns ovr/c1_inst.csv
-   ```
+```bash
+pip install -r requirements-perf.txt
+python perf_summary.py ../logs/protvr-log-*.json --out results/perf
+# opcional: --drop-factor 1.5  (quadro perdido se dt > fator × 1000/frameRate)
+```
 
-   Se os nomes não baterem com os candidatos de `DEFAULT_COLUMNS` (no topo de
-   `perf_summary.py`), crie um `columns.json`:
+Saídas em `results/perf/`:
 
-   ```json
-   {"fps": "FPS", "gpu_time": "App GPU Time", "gpu_time_unit": "us",
-    "timestamp": "Time Stamp", "timestamp_unit": "ms"}
-   ```
+| Arquivo | Conteúdo |
+|---|---|
+| `runs/<log>.csv` | uma linha por repetição (ciclo do A/X) × fase de cada execução |
+| `perf_runs.csv` | todas as repetições juntas |
+| `perf_summary.csv` | cenário × condição × fase (`stabilization`, `static`, `interaction`): média e desvio padrão entre repetições, com `n_reps` |
+| `loads.csv` / `loads_summary.csv` | tempos de carga (parse, bonds, build e total) por molécula |
 
-2. Monte um manifesto com uma linha por gravação. Os caminhos são relativos à
-   pasta do manifesto. Com o log preenchido, `scenario` e `instancing` podem
-   ficar vazios:
+Métricas por fase, usando só quadros com `presenting = 1`:
 
-   ```csv
-   ovr_csv,log,scenario,instancing
-   ovr/c1_inst.csv,logs/protvr-log-1.json,,
-   ovr/c1_mesh.csv,logs/protvr-log-2.json,,
-   ovr/c3_mesh.csv,,c3,0
-   ```
-
-3. Gere a tabela:
-
-   ```bash
-   python perf_summary.py --manifest runs.csv --target-hz 72 \
-       --columns columns.json --out results/perf_summary.csv
-   ```
-
-A tabela tem uma linha por cenário × instancing:
-
-- FPS: média, desvio padrão e mínimo;
-- tempo de GPU (ms): média, desvio padrão, mínimo e máximo;
-- percentual de amostras com FPS abaixo do alvo;
-- quando há log: tempo de carga, `firstFrameMs`, número de malhas, chamadas de
-  desenho, triângulos e FPS medido pela própria aplicação.
-
-Se os horários do OVR forem de época, as amostras são recortadas à sessão XR
-do log. Caso contrário, use `--trim-start`/`--trim-end` (em segundos) para
-descartar o aquecimento e o encerramento.
+- FPS em janelas de 1 s: média, desvio padrão e mínimo;
+- `dt` e `cpu`: média e percentil 95;
+- percentual de quadros perdidos;
+- média de `calls` e `triangles`, por quadro e somando os dois olhos.

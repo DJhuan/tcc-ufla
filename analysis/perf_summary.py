@@ -1,265 +1,275 @@
 #!/usr/bin/env python3
-"""Resumo de desempenho a partir dos CSVs do OVR Metrics Tool + logs do ProtVR.
+"""Resumo de desempenho a partir dos logs do ProtVR (formato v2, ?perf=1).
 
-Entrada principal: um manifesto CSV, uma linha por execução (gravação):
+Cada JSON exportado contém as amostras por quadro (`frames`) e os eventos
+(`entries`). Cenário e condição (instanciado ou não) vêm do evento
+"config". As fases vêm das marcas do botão A/X:
 
-    ovr_csv,log,scenario,instancing
-    ovr/c1_inst.csv,logs/protvr-log-...json,,
-    ovr/c3_mesh.csv,,c3,0
+    session-start ─ stabilization ─ phase-start{static} ─ static ─
+    phase-start{interaction} ─ interaction ─ phase-end
 
-* `ovr_csv` (obrigatório): CSV exportado pelo OVR Metrics Tool;
-* `log` (opcional): JSON do ProtVR da mesma execução. Fornece cenário e
-  condição (se as colunas ficarem vazias), recorta as amostras do OVR à
-  sessão XR quando os horários são de época e acrescenta tempo de carga
-  e chamadas de desenho (eventos "load" e "perf");
-* `scenario` / `instancing` (opcionais se houver log): sobrescrevem o log.
-Caminhos relativos são resolvidos a partir da pasta do manifesto.
+Cada ciclo static/interaction é uma repetição. O segmento "stabilization"
+vai do session-start até o primeiro phase-start{static} da sessão. Os
+limites usam o `frameIndex` das marcas (mesmo relógio das amostras) e só
+entram quadros com presenting = 1.
 
-Para cada (cenário, instancing), concatena as amostras de todas as
-execuções e calcula média, desvio padrão e mínimo do FPS e do tempo de
-GPU, e o percentual de amostras com FPS abaixo da taxa alvo (--target-hz,
-padrão 72).
+Métricas por fase:
+  * FPS em janelas de 1 s (contagem de quadros; a última janela incompleta é
+    descartada): média, desvio padrão e mínimo;
+  * dt e cpu (ms): média e percentil 95. O dt do primeiro quadro em XR (que
+    inclui a transição desktop→XR) é ignorado;
+  * quadros perdidos: dt > FATOR × 1000 / frameRate (FATOR = 1,5), com a taxa
+    vigente (session-start / framerate-change) ou, se o navegador não a
+    informar, estimada pela mediana do dt;
+  * média de calls e triangles (por quadro, soma dos dois olhos).
 
-Nomes de colunas do OVR Metrics Tool: NÃO CONFIRMADOS. O mapeamento
-padrão (DEFAULT_COLUMNS) tenta vários nomes candidatos; confira os nomes
-reais com `--list-columns arquivo.csv` e, se necessário, passe um JSON
-com `--columns map.json`, por exemplo:
-    {"fps": "FPS", "gpu_time": "App GPU Time", "gpu_time_unit": "us",
-     "timestamp": "Time Stamp", "timestamp_unit": "ms"}
+Saídas em --out:
+  runs/<log>.csv     uma linha por repetição × fase, para cada execução
+  perf_runs.csv      todas as repetições juntas
+  perf_summary.csv   cenário × condição × fase: média e desvio padrão
+                     entre repetições (n_reps)
+  loads.csv          tempos de carga (eventos "load") de cada molécula
+  loads_summary.csv  cenário × condição × molécula: média e desvio padrão
 
 Uso:
-    python perf_summary.py --manifest runs.csv --out results/perf_summary.csv
-    python perf_summary.py --list-columns ovr/c1_inst.csv
+    python perf_summary.py ../logs/protvr-log-*.json --out results/perf
 """
 
 from __future__ import annotations
 
 import argparse
-import json
-import math
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from protvr_log import ProtVRLog, load_log
 
-# Candidatos (comparação sem diferenciar maiúsculas/minúsculas e espaços).
-DEFAULT_COLUMNS: dict[str, object] = {
-    "fps": ["FPS", "Frame Rate", "fps"],
-    "gpu_time": ["App GPU Time", "App GPU Time (us)", "App GPU Time µs", "GPU Time", "app_gpu_time"],
-    # "auto": deduz pela unidade no nome da coluna (us/µs/ms) ou pela magnitude.
-    "gpu_time_unit": "auto",
-    "timestamp": ["Time Stamp", "Timestamp", "Time", "time_ms"],
-    # "auto": época em s/ms/µs pela magnitude; valores pequenos = relativos.
-    "timestamp_unit": "auto",
-}
+FRAME_FIELDS = ["t", "dt", "cpu", "calls", "triangles", "presenting"]
+PHASES = ["stabilization", "static", "interaction"]
+COMMON_RATES = np.array([60.0, 72.0, 80.0, 90.0, 120.0])
+METRICS = [
+    "duration_s", "n_frames", "fps_mean", "fps_std", "fps_min",
+    "dt_mean", "dt_p95", "cpu_mean", "cpu_p95",
+    "dropped_n", "dropped_pct", "calls_mean", "triangles_mean",
+]
+LOAD_FIELDS = ["parseMs", "bondsMs", "buildMs", "totalMs", "readMs", "sceneMs", "firstFrameMs"]
 
 
-def norm(name: str) -> str:
-    return "".join(name.lower().split())
+def warn(message: str) -> None:
+    print(f"aviso: {message}", file=sys.stderr)
 
 
-def resolve_column(df: pd.DataFrame, spec: object, required: bool, key: str) -> str | None:
-    candidates = [spec] if isinstance(spec, str) else list(spec or [])
-    by_norm = {norm(c): c for c in df.columns}
-    for cand in candidates:
-        if cand in df.columns:
-            return cand
-        if norm(cand) in by_norm:
-            return by_norm[norm(cand)]
-    # Último recurso: coluna cujo nome contém o candidato.
-    for cand in candidates:
-        for col in df.columns:
-            if norm(cand) in norm(col):
-                return col
-    if required:
-        raise KeyError(
-            f"coluna para '{key}' não encontrada (candidatos: {candidates}). "
-            f"Colunas do arquivo: {list(df.columns)}. Ajuste com --columns."
-        )
-    return None
-
-
-def gpu_time_to_ms(series: pd.Series, column: str, unit: str) -> pd.Series:
-    if unit == "auto":
-        lowered = column.lower()
-        if "µs" in lowered or "us)" in lowered or lowered.endswith(" us") or "micro" in lowered:
-            unit = "us"
-        elif "ms" in lowered:
-            unit = "ms"
-        else:
-            unit = "us" if series.median() > 1000 else "ms"
-            print(f"aviso: unidade de '{column}' deduzida pela magnitude: {unit}", file=sys.stderr)
-    factor = {"us": 1e-3, "ms": 1.0, "s": 1e3, "ns": 1e-6}[unit]
-    return series * factor
-
-
-def timestamps_to_epoch_ms(series: pd.Series, unit: str) -> pd.Series | None:
-    """Converte para ms de época; None se os horários forem relativos."""
-    values = pd.to_numeric(series, errors="coerce")
-    if values.isna().all():
-        parsed = pd.to_datetime(series, errors="coerce")
-        if parsed.isna().all():
-            return None
-        return parsed.astype("int64") / 1e6
-    if unit == "auto":
-        median = values.median()
-        if median > 1e14:
-            unit = "us"
-        elif median > 1e11:
-            unit = "ms"
-        elif median > 1e8:
-            unit = "s"
-        else:
-            return None
-    factor = {"us": 1e-3, "ms": 1.0, "s": 1e3}[unit]
-    return values * factor
-
-
-def read_ovr(path: Path, columns: dict, log: ProtVRLog | None, trim_start: float, trim_end: float) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    fps_col = resolve_column(df, columns["fps"], True, "fps")
-    gpu_col = resolve_column(df, columns["gpu_time"], False, "gpu_time")
-    ts_col = resolve_column(df, columns["timestamp"], False, "timestamp")
-
-    out = pd.DataFrame({"fps": pd.to_numeric(df[fps_col], errors="coerce")})
-    out["gpu_ms"] = (
-        gpu_time_to_ms(pd.to_numeric(df[gpu_col], errors="coerce"), gpu_col, str(columns["gpu_time_unit"]))
-        if gpu_col else math.nan
-    )
-
-    epoch = timestamps_to_epoch_ms(df[ts_col], str(columns["timestamp_unit"])) if ts_col else None
-    if epoch is not None and log is not None:
-        sessions = log.session_intervals()
-        if sessions:
-            inside = pd.Series(False, index=df.index)
-            for start, end in sessions:
-                inside |= (epoch >= start) & (epoch <= end)
-            if inside.any():
-                out = out[inside]
-                epoch = epoch[inside]
-            else:
-                print(f"aviso: {path.name}: nenhuma amostra dentro das sessões XR do log; usando todas.", file=sys.stderr)
-
-    if trim_start > 0 or trim_end > 0:
-        if epoch is not None:
-            rel = (epoch - epoch.min()) / 1000.0
-        else:
-            rel = pd.Series(range(len(out)), index=out.index, dtype=float)  # ~1 amostra/s
-        keep = (rel >= trim_start) & (rel <= rel.max() - trim_end)
-        out = out[keep]
-
-    return out.dropna(subset=["fps"])
-
-
-def log_extras(log: ProtVRLog | None) -> dict:
-    if log is None:
-        return {}
-    loads = log.of_type("load")
-    ready = [e["t"] for e in log.of_type("scenario-ready")]
-    if ready:
-        loads = [e for e in loads if e["t"] <= ready[0]]
-    perf = [e["data"] for e in log.of_type("perf") if e["data"].get("presenting")]
-    extras: dict = {}
-    if loads:
-        extras["load_total_ms"] = sum(e["data"]["totalMs"] for e in loads)
-        first = [e["data"].get("firstFrameMs") for e in loads if e["data"].get("firstFrameMs") is not None]
-        extras["load_first_frame_ms"] = sum(first) if first else math.nan
-        extras["atoms"] = sum(e["data"]["atoms"] for e in loads)
-        extras["meshes"] = sum(e["data"]["meshes"] for e in loads)
-    if perf:
-        extras["draw_calls_mean"] = sum(p["calls"] for p in perf) / len(perf)
-        extras["triangles_mean"] = sum(p["triangles"] for p in perf) / len(perf)
-        extras["app_fps_mean"] = sum(p["fps"] for p in perf) / len(perf)
-    return extras
-
-
-def parse_instancing(value: object) -> bool | None:
-    if value is None or (isinstance(value, float) and math.isnan(value)) or str(value).strip() == "":
+def frames_dataframe(log: ProtVRLog) -> pd.DataFrame | None:
+    frames = log.frames
+    if not frames or not frames.get("count"):
         return None
-    return str(value).strip().lower() in {"1", "true", "sim", "yes", "inst", "instanced"}
+    df = pd.DataFrame({f: pd.to_numeric(pd.Series(frames[f]), errors="coerce") for f in FRAME_FIELDS})
+    df.index.name = "frame"
+    # dt válido só se o quadro anterior também estava em XR;
+    prev_presenting = df["presenting"].shift(1)
+    df["dt_valid"] = (df["presenting"] == 1) & (prev_presenting == 1) & df["dt"].notna()
+    return df
+
+
+def resolve_index(value, count: int, label: str, log: ProtVRLog) -> int:
+    if value is None or value < 0:
+        warn(f"{log.path.name}: '{label}' sem frameIndex válido (buffer cheio?); usando o fim das amostras.")
+        return count
+    return int(value)
+
+
+def segments(log: ProtVRLog, count: int) -> list[dict]:
+    """Lista de {cycle, phase, start, end} com índices de quadro [start, end)."""
+    out: list[dict] = []
+    session_idx: int | None = None
+    first_cycle_pending = False
+    open_phase: dict | None = None
+
+    def close(end: int) -> None:
+        nonlocal open_phase
+        if open_phase is not None:
+            out.append({**open_phase, "end": end})
+            open_phase = None
+
+    for e in log.of_type("session-start", "session-end", "phase-start", "phase-end"):
+        d = e["data"]
+        kind = e["type"]
+        if kind == "session-start":
+            session_idx = resolve_index(d.get("frameIndex"), count, kind, log)
+            first_cycle_pending = True
+        elif kind == "phase-start":
+            idx = resolve_index(d.get("frameIndex"), count, kind, log)
+            close(idx)
+            if d.get("phase") == "static" and first_cycle_pending and session_idx is not None:
+                out.append({"cycle": d.get("cycle"), "phase": "stabilization", "start": session_idx, "end": idx})
+                first_cycle_pending = False
+            open_phase = {"cycle": d.get("cycle"), "phase": d.get("phase"), "start": idx}
+        elif kind == "phase-end":
+            close(resolve_index(d.get("frameIndex"), count, kind, log))
+        elif kind == "session-end":
+            close(resolve_index(d.get("frameIndex"), count, kind, log))
+            session_idx = None
+            first_cycle_pending = False
+    close(count)
+    return [s for s in out if s["end"] > s["start"]]
+
+
+def refresh_rates(log: ProtVRLog, df: pd.DataFrame) -> tuple[pd.Series, str]:
+    """Taxa de atualização vigente em cada quadro e a origem da informação."""
+    events = []
+    for e in log.of_type("session-start", "framerate-change"):
+        rate, idx = e["data"].get("frameRate"), e["data"].get("frameIndex")
+        if rate and idx is not None and idx >= 0:
+            events.append((int(idx), float(rate)))
+    if events:
+        events.sort()
+        starts = np.array([i for i, _ in events])
+        rates = np.array([r for _, r in events])
+        pos = np.searchsorted(starts, df.index.to_numpy(), side="right") - 1
+        series = pd.Series(np.where(pos >= 0, rates[np.clip(pos, 0, None)], np.nan), index=df.index)
+        if series[df["presenting"] == 1].notna().all():
+            return series, "session"
+    valid_dt = df.loc[df["dt_valid"], "dt"]
+    if valid_dt.empty:
+        return pd.Series(np.nan, index=df.index), "indisponível"
+    estimate = COMMON_RATES[np.argmin(np.abs(COMMON_RATES - 1000.0 / valid_dt.median()))]
+    warn(f"{log.path.name}: frameRate não informado; estimado em {estimate:g} Hz pela mediana do dt.")
+    return pd.Series(estimate, index=df.index), "estimated"
+
+
+def segment_metrics(seg: pd.DataFrame, drop_factor: float) -> dict:
+    t = seg["t"].to_numpy()
+    rel = t - t[0]
+    n_full = int(np.floor(rel[-1] / 1000.0))
+    if n_full > 0:
+        windows = np.floor(rel / 1000.0).astype(int)
+        counts = np.bincount(windows[windows < n_full], minlength=n_full).astype(float)
+        fps_mean, fps_std, fps_min = counts.mean(), (counts.std(ddof=1) if n_full > 1 else np.nan), counts.min()
+    else:
+        fps_mean = fps_std = fps_min = np.nan
+
+    valid = seg[seg["dt_valid"]]
+    dt = valid["dt"]
+    threshold = drop_factor * 1000.0 / valid["rate"]
+    dropped = int((dt > threshold).sum())
+
+    return {
+        "duration_s": rel[-1] / 1000.0,
+        "n_frames": len(seg),
+        "n_windows": n_full,
+        "fps_mean": fps_mean,
+        "fps_std": fps_std,
+        "fps_min": fps_min,
+        "dt_mean": dt.mean(),
+        "dt_p95": dt.quantile(0.95) if len(dt) else np.nan,
+        "cpu_mean": seg["cpu"].mean(),
+        "cpu_p95": seg["cpu"].quantile(0.95),
+        "dropped_n": dropped,
+        "dropped_pct": 100.0 * dropped / len(dt) if len(dt) else np.nan,
+        "refresh_hz": seg["rate"].mode().iloc[0] if seg["rate"].notna().any() else np.nan,
+        "calls_mean": seg["calls"].mean(),
+        "triangles_mean": seg["triangles"].mean(),
+    }
+
+
+def condition_label(instancing) -> str:
+    if instancing is None:
+        return "desconhecida"
+    return "instanced" if instancing else "non-instanced"
+
+
+def analyse_log(path: Path, drop_factor: float) -> tuple[pd.DataFrame, pd.DataFrame]:
+    log = load_log(path)
+    scenario = log.scenario or "sem-cenario"
+    instancing = log.instancing
+    base = {"file": path.name, "scenario": scenario, "instancing": instancing,
+            "condition": condition_label(instancing)}
+
+    loads = pd.DataFrame([
+        {**base, "name": e["data"].get("name"), "atoms": e["data"].get("atoms"),
+         "bonds": e["data"].get("bonds"), "meshes": e["data"].get("meshes"),
+         **{f: e["data"].get(f) for f in LOAD_FIELDS}}
+        for e in log.of_type("load")
+    ])
+
+    df = frames_dataframe(log)
+    if df is None:
+        warn(f"{path.name}: sem amostras por quadro (log v{log.version} ou sem ?perf=1); só tempos de carga.")
+        return pd.DataFrame(), loads
+    if log.of_type("perf-buffer-full"):
+        warn(f"{path.name}: o buffer de quadros encheu; o fim da execução não foi gravado.")
+
+    df["rate"], rate_source = refresh_rates(log, df)
+    rows = []
+    for s in segments(log, len(df)):
+        seg = df.iloc[s["start"]:s["end"]]
+        seg = seg[seg["presenting"] == 1]
+        if len(seg) < 2:
+            warn(f"{path.name}: ciclo {s['cycle']} fase {s['phase']} sem quadros em XR suficientes; ignorado.")
+            continue
+        rows.append({**base, "cycle": s["cycle"], "phase": s["phase"],
+                     "frame_start": s["start"], "frame_end": s["end"],
+                     "refresh_source": rate_source, **segment_metrics(seg, drop_factor)})
+    if not rows:
+        warn(f"{path.name}: nenhuma fase marcada (botão A/X) encontrada.")
+    return pd.DataFrame(rows), loads
+
+
+def aggregate(df: pd.DataFrame, keys: list[str], metrics: list[str], count_name: str) -> pd.DataFrame:
+    grouped = df.groupby(keys, dropna=False, sort=True)
+    out = grouped.size().rename(count_name).to_frame()
+    for m in metrics:
+        out[f"{m}_mean"] = grouped[m].mean()
+        out[f"{m}_std"] = grouped[m].std(ddof=1)
+    return out.reset_index()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--manifest", type=Path, help="CSV com as execuções (ovr_csv, log, scenario, instancing)")
-    parser.add_argument("--target-hz", type=float, default=72.0, help="taxa de atualização alvo (padrão: 72)")
-    parser.add_argument("--columns", type=Path, help="JSON com o mapeamento de colunas do OVR Metrics Tool")
-    parser.add_argument("--trim-start", type=float, default=0.0, help="segundos descartados no início de cada execução")
-    parser.add_argument("--trim-end", type=float, default=0.0, help="segundos descartados no fim de cada execução")
-    parser.add_argument("--out", type=Path, default=Path("results/perf_summary.csv"))
-    parser.add_argument("--list-columns", type=Path, metavar="CSV", help="só lista as colunas de um CSV do OVR e sai")
+    parser.add_argument("logs", type=Path, nargs="+", help="JSONs exportados pelo ProtVR (?perf=1)")
+    parser.add_argument("--out", type=Path, default=Path("results/perf"), help="pasta de saída")
+    parser.add_argument("--drop-factor", type=float, default=1.5,
+                        help="quadro perdido se dt > FATOR × intervalo nominal (padrão: 1.5)")
     args = parser.parse_args()
 
-    if args.list_columns:
-        df = pd.read_csv(args.list_columns, nrows=5)
-        for col in df.columns:
-            print(f"{col!r}: ex. {df[col].iloc[0] if len(df) else ''}")
-        return 0
-    if not args.manifest:
-        parser.error("--manifest é obrigatório (ou use --list-columns).")
+    (args.out / "runs").mkdir(parents=True, exist_ok=True)
+    all_runs, all_loads = [], []
+    for path in args.logs:
+        runs, loads = analyse_log(path, args.drop_factor)
+        if not runs.empty:
+            runs.to_csv(args.out / "runs" / f"{path.stem}.csv", index=False, float_format="%.4f")
+            all_runs.append(runs)
+            print(f"{path.name}: {runs['scenario'].iloc[0]} / {runs['condition'].iloc[0]} → "
+                  f"{runs['cycle'].nunique()} repetição(ões), {len(runs)} linhas")
+        if not loads.empty:
+            all_loads.append(loads)
 
-    columns = dict(DEFAULT_COLUMNS)
-    if args.columns:
-        columns.update(json.loads(args.columns.read_text(encoding="utf-8")))
+    if all_runs:
+        runs_df = pd.concat(all_runs, ignore_index=True)
+        runs_df["phase"] = pd.Categorical(runs_df["phase"], PHASES, ordered=True)
+        runs_df.to_csv(args.out / "perf_runs.csv", index=False, float_format="%.4f")
+        summary = aggregate(runs_df, ["scenario", "condition", "phase"], METRICS, "n_reps")
+        summary = summary[summary["n_reps"] > 0]
+        summary.to_csv(args.out / "perf_summary.csv", index=False, float_format="%.4f")
+        cols = ["scenario", "condition", "phase", "n_reps", "fps_mean_mean", "fps_min_mean",
+                "dt_p95_mean", "cpu_mean_mean", "dropped_pct_mean", "calls_mean_mean"]
+        with pd.option_context("display.width", 200, "display.max_columns", None):
+            print(summary[cols].round(2).to_string(index=False))
+        reps = summary[summary["phase"] != "stabilization"]["n_reps"]
+        if len(reps) and (reps != 3).any():
+            warn("há combinações com número de repetições diferente de 3 (veja n_reps).")
+    else:
+        warn("nenhuma fase encontrada em nenhum log; perf_summary.csv não gerado.")
 
-    manifest = pd.read_csv(args.manifest, dtype=str, keep_default_na=False)
-    base = args.manifest.parent
-    samples, runs = [], []
+    if all_loads:
+        loads_df = pd.concat(all_loads, ignore_index=True)
+        loads_df.to_csv(args.out / "loads.csv", index=False, float_format="%.3f")
+        aggregate(loads_df, ["scenario", "condition", "name"], ["parseMs", "bondsMs", "buildMs", "totalMs"], "n").to_csv(
+            args.out / "loads_summary.csv", index=False, float_format="%.3f")
 
-    for i, row in manifest.iterrows():
-        ovr_path = base / row["ovr_csv"]
-        log = load_log(base / row["log"]) if row.get("log") else None
-
-        scenario = row.get("scenario") or (log.scenario if log else None)
-        instancing = parse_instancing(row.get("instancing"))
-        if instancing is None and log is not None:
-            instancing = log.instancing
-        if not scenario or instancing is None:
-            print(f"erro: linha {i + 2}: cenário/instancing indefinidos (preencha o manifesto ou informe o log).", file=sys.stderr)
-            return 1
-
-        data = read_ovr(ovr_path, columns, log, args.trim_start, args.trim_end)
-        data["scenario"] = scenario
-        data["instancing"] = int(instancing)
-        samples.append(data)
-        runs.append({"scenario": scenario, "instancing": int(instancing), **log_extras(log)})
-        print(f"{ovr_path.name}: {scenario} instancing={int(instancing)} → {len(data)} amostras")
-
-    all_samples = pd.concat(samples, ignore_index=True)
-    runs_df = pd.DataFrame(runs)
-
-    rows = []
-    for (scenario, instancing), group in all_samples.groupby(["scenario", "instancing"], sort=True):
-        fps, gpu = group["fps"], group["gpu_ms"]
-        run_group = runs_df[(runs_df["scenario"] == scenario) & (runs_df["instancing"] == instancing)]
-        row = {
-            "scenario": scenario,
-            "instancing": instancing,
-            "n_runs": len(run_group),
-            "n_samples": len(group),
-            "fps_mean": fps.mean(),
-            "fps_std": fps.std(ddof=1),
-            "fps_min": fps.min(),
-            "gpu_ms_mean": gpu.mean(),
-            "gpu_ms_std": gpu.std(ddof=1),
-            "gpu_ms_min": gpu.min(),
-            "gpu_ms_max": gpu.max(),
-            "target_hz": args.target_hz,
-            "pct_below_target": 100.0 * (fps < args.target_hz).mean(),
-        }
-        for extra in ("load_total_ms", "load_first_frame_ms", "atoms", "meshes", "draw_calls_mean", "triangles_mean", "app_fps_mean"):
-            if extra in run_group:
-                row[extra] = run_group[extra].mean()
-        rows.append(row)
-
-    summary = pd.DataFrame(rows)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(args.out, index=False, float_format="%.3f")
-    with pd.option_context("display.max_columns", None, "display.width", 200):
-        print(summary.round(2).to_string(index=False))
-    print(f"tabela → {args.out}")
+    print(f"resultados em {args.out}")
     return 0
 
 

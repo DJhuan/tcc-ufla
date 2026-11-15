@@ -14,6 +14,7 @@ import { VRMenu } from "../../core/VRMenu";
 import type { InteractionObserver } from "../../core/InteractionObserver";
 import type { ParseTimings } from "../../domain/IMoleculeParser";
 import type { LoadMetrics } from "../../core/LoadMetrics";
+import type { FrameHook } from "../../core/FrameSampler";
 
 export type { TransformMode } from "../../state/MoleculeStore";
 
@@ -56,7 +57,7 @@ export class MoleculeViewer {
 
   // Instrumentação (experimentos); sem ouvintes, nada é medido nem enfileirado;
   private loadMetricsListener?: (metrics: LoadMetrics) => void;
-  private afterRenderHook?: () => void;
+  private frameHook?: FrameHook;
   private readonly pendingLoadReports: Array<{
     addedAt: number;
     metrics: LoadMetrics;
@@ -199,9 +200,13 @@ export class MoleculeViewer {
     this.loadMetricsListener = listener;
   }
 
-  /** Função chamada logo após cada renderer.render() (ex.: PerfSampler). */
-  public setAfterRenderHook(hook: (() => void) | undefined) {
-    this.afterRenderHook = hook;
+  /**
+   * Ganchos por quadro (ex.: FrameSampler): beginFrame no início do
+   * renderLoop e endFrame logo após renderer.render(). Sem gancho, o
+   * renderLoop não faz nenhum trabalho extra.
+   */
+  public setFrameHook(hook: FrameHook | undefined) {
+    this.frameHook = hook;
   }
 
   public getContainer(): HTMLElement {
@@ -275,12 +280,16 @@ export class MoleculeViewer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   };
 
-  private renderLoop = () => {
+  // Assinatura do setAnimationLoop: durante a sessão XR, `time` e `frame`
+  // vêm do requestAnimationFrame do WebXR;
+  private renderLoop = (time: DOMHighResTimeStamp, _frame?: XRFrame) => {
+    const hook = this.frameHook;
+    hook?.beginFrame(time);
     this.controls.update();
     this.xrControllerManager.update();
     this.renderer.render(this.scene, this.camera);
+    hook?.endFrame();
     if (this.pendingLoadReports.length > 0) this.flushLoadReports();
-    this.afterRenderHook?.();
   };
 
   private handleTransformObjectChange = () => {

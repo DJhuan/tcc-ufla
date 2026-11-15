@@ -2,10 +2,13 @@
 
 Formato (ver docs/INSTRUMENTACAO.md):
     {
-      "format": "protvr-log", "version": 1,
+      "format": "protvr-log", "version": 2,
       "startedAt": <ms de época>, "exportedAt": <ms de época>,
-      "entries": [{"t": <ms de época>, "type": "...", "data": {...}}, ...]
+      "entries": [{"t": <ms de época>, "type": "...", "data": {...}}, ...],
+      "frames": null | {"count", "capacity", "full", "timeOrigin",
+                        "t", "dt", "cpu", "calls", "triangles", "presenting"}
     }
+A versão 1 não tem "frames"; os scripts do CLIP leem só "entries".
 """
 
 from __future__ import annotations
@@ -24,6 +27,8 @@ class ProtVRLog:
     started_at: float
     exported_at: float
     entries: list[dict[str, Any]]
+    version: int = 1
+    frames: dict[str, Any] | None = None
 
     def of_type(self, *types: str) -> list[dict[str, Any]]:
         wanted = set(types)
@@ -90,4 +95,6 @@ def load_log(path: str | Path) -> ProtVRLog:
         started_at=float(raw.get("startedAt", entries[0]["t"] if entries else 0)),
         exported_at=float(raw.get("exportedAt", entries[-1]["t"] if entries else 0)),
         entries=entries,
+        version=int(raw.get("version", 1)),
+        frames=raw.get("frames"),
     )

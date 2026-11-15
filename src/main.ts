@@ -6,7 +6,7 @@ import { createMovementControls } from "./components/MoleculeViewer/MovementCont
 import { createLogExportButtons } from "./components/Buttons/LogExportButton";
 import { parseExperimentConfig } from "./core/ExperimentConfig";
 import { EventLogger } from "./core/EventLogger";
-import { PerfSampler } from "./core/PerfSampler";
+import { FrameSampler } from "./core/FrameSampler";
 import { formatLoadMetrics } from "./core/LoadMetrics";
 import { SCENARIOS, SCENARIO_IDS, getScenarioUrls } from "./core/Scenarios";
 import {
@@ -82,7 +82,13 @@ mountXRButtons();
 
 const logger =
   experiment.log || experiment.perf
-    ? new EventLogger(viewer.store, viewer.renderer.xr, { experiment })
+    ? new EventLogger(
+        viewer.store,
+        viewer.renderer.xr,
+        { experiment },
+        // Fases do experimento pelo botão A/X (somente com ?perf=1);
+        { phaseMarking: experiment.perf },
+      )
     : null;
 
 // Tempos de carga: sempre no console; no registro, se ativo;
@@ -91,18 +97,20 @@ viewer.setLoadMetricsListener((metrics) => {
   logger?.log("load", { ...metrics });
 });
 
-// Amostragem de renderer.info a cada segundo (somente com ?perf=1);
+// Amostragem por quadro (somente com ?perf=1): entra no JSON em `frames`;
 if (logger && experiment.perf) {
-  viewer.setAfterRenderHook(
-    new PerfSampler(viewer.renderer, logger).afterRender,
-  );
+  const frameSampler = new FrameSampler(viewer.renderer);
+  logger.attachFrameSampler(frameSampler);
+  viewer.setFrameHook(frameSampler);
 }
 
 if (logger) {
   viewer.setInteractionObserver(logger);
 
   const exportCurrentLog = () => {
-    void exportLog(makeLogFileName(Date.now()), logger.toJSON());
+    void exportLog(makeLogFileName(Date.now()), logger.toJSON(), () =>
+      logger.toJSON({ includeFrames: false }),
+    );
   };
 
   const logButtons = createLogExportButtons({

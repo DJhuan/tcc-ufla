@@ -6,7 +6,8 @@
  * desligadas e a aplicação se comporta como de costume.
  *
  * - ?log=1        → ativa o EventLogger (registro de eventos de interação).
- * - ?perf=1       → amostra renderer.info a cada segundo (implica o logger).
+ * - ?perf=1       → amostras por quadro (FrameSampler) e fases pelo botão A/X
+ *                   (implica o logger).
  * - ?instancing=0 → um THREE.Mesh por átomo/ligação em vez de InstancedMesh.
  * - ?scenario=<id> → carrega um cenário pré-definido (ver Scenarios.ts).
  */

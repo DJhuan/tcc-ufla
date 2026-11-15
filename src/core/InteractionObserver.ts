@@ -21,6 +21,8 @@ export interface InteractionObserver {
   dragStarted(handedness: XRHandedness, mode: string): void;
   dragEnded(handedness: XRHandedness, mode: string): void;
   syncPressed(handedness: XRHandedness): void;
+  /** Borda de subida do botão A/X (marcação de fases do experimento). */
+  phaseButtonPressed(handedness: XRHandedness): void;
   menuButtonHovered(id: VRMenuButtonId | null, label: string | null): void;
   menuButtonClicked(id: VRMenuButtonId, label: string): void;
 }

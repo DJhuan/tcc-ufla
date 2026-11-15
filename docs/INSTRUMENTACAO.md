@@ -6,8 +6,11 @@ experimentos do TCC:
 1. **Avaliação com CLIP.** O Quest Pro grava a tela enquanto um roteiro fixo de
    ações é executado. Cada quadro do vídeo é rotulado com o estado de interação
    lido do registro de eventos e depois classificado zero-shot pelo CLIP.
-2. **Desempenho.** O OVR Metrics Tool mede FPS e tempo de GPU em cenários fixos,
-   com e sem instanciamento de malhas.
+2. **Desempenho.** A própria aplicação mede, quadro a quadro, o intervalo entre
+   quadros, o tempo de CPU e as chamadas de desenho em cenários fixos, com e sem
+   instanciamento de malhas. As fases de cada execução são marcadas pelo botão
+   A/X. Tudo é exportado no mesmo JSON do log; o OVR Metrics Tool não é usado,
+   porque não registra sessões do Quest Browser.
 
 Sem nenhum parâmetro de URL, a aplicação se comporta exatamente como antes. A
 instrumentação não desenha nada na cena (nenhum HUD) e não altera o retorno
@@ -21,7 +24,7 @@ VRMenu e contorno de seleção.
 | Parâmetro    | Valores                            | Efeito                                                                                                                                                                  |
 | ------------ | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `log`        | `1`                                | Ativa o registro de eventos (`EventLogger`) e mostra os botões **Exportar log** e **Logs salvos (N)** na barra da página.                                               |
-| `perf`       | `1`                                | Amostra `renderer.info` uma vez por segundo (eventos `perf`). Também ativa o registro e os botões, porque precisa de onde gravar.                                       |
+| `perf`       | `1`                                | Grava amostras **por quadro** (`frames` no JSON, §5) e ativa a marcação de fases pelo botão **A/X** (§8). Também ativa o registro e os botões, porque precisa de onde gravar. |
 | `instancing` | `0`                                | Constrói um `THREE.Mesh` por átomo e por ligação, compartilhando geometrias e materiais, em vez de `InstancedMesh`. Sem o parâmetro, a construção continua instanciada. |
 | `scenario`   | `m1`, `m2`, `c1`, `c2`, `c3`, `c4` | Carrega o cenário ao abrir a página, no lugar do ATP de demonstração. Um id inválido gera um aviso no console e a página carrega o ATP.                                 |
 
@@ -96,7 +99,7 @@ por exemplo `protvr-log-2026-11-14T15-02-31-123Z.json`.
 ```json
 {
   "format": "protvr-log",
-  "version": 1,
+  "version": 2,
   "startedAt": 1763132551123.4,
   "exportedAt": 1763132911456.7,
   "entries": [
@@ -120,7 +123,13 @@ por exemplo `protvr-log-2026-11-14T15-02-31-123Z.json`.
     {
       "t": 1763132563001.0,
       "type": "session-start",
-      "data": { "environmentBlendMode": "opaque" }
+      "data": {
+        "environmentBlendMode": "opaque",
+        "frameRate": 72,
+        "supportedFrameRates": [72, 90],
+        "frameIndex": 312,
+        "frameT": 12999.85
+      }
     },
     { "t": 1763132565210.8, "type": "sync", "data": { "handedness": "right" } },
     {
@@ -129,7 +138,19 @@ por exemplo `protvr-log-2026-11-14T15-02-31-123Z.json`.
       "data": { "handedness": "right", "state": "hover", "target": "gizmo" }
     },
     { "t": 1763132570002.4, "type": "state", "data": { "state": "E2" } }
-  ]
+  ],
+  "frames": {
+    "count": 9436,
+    "capacity": 131072,
+    "full": false,
+    "timeOrigin": 1763132550001.2,
+    "t": [12999.85, 13013.74, 13027.63],
+    "dt": [null, 13.89, 13.89],
+    "cpu": [2.1, 1.9, 2.0],
+    "calls": [41, 41, 41],
+    "triangles": [52380, 52380, 52380],
+    "presenting": [0, 1, 1]
+  }
 }
 ```
 
@@ -137,8 +158,18 @@ por exemplo `protvr-log-2026-11-14T15-02-31-123Z.json`.
   em ponto flutuante, monotônico dentro da página.
 - **Conteúdo:** o log acumula tudo desde a abertura da página. Cada exportação
   traz o histórico completo, e várias sessões XR aparecem em sequência.
-- **Só mudanças:** o log não grava nada a cada quadro. A exceção é `perf`, uma
-  vez por segundo.
+- **Só mudanças:** `entries` não recebe nada a cada quadro. As amostras por
+  quadro ficam à parte, em `frames` (§5), e só existem com `?perf=1`; sem ele,
+  `frames` é `null`.
+- **Versões:** a versão 1 não tinha `frames`, as fases do A/X nem os campos
+  `frameRate`/`frameIndex`/`frameT`. Os scripts do CLIP leem só `entries` e
+  aceitam as duas versões.
+- **`frameIndex` e `frameT`:** presentes nos eventos de sessão, de fase, de taxa
+  de atualização e de buffer cheio. `frameIndex` é o índice, em `frames`, da
+  primeira amostra gravada a partir do evento (dentro do quadro em andamento, é
+  o próprio quadro; -1 se o buffer estiver cheio). `frameT` é o `t` do quadro em
+  andamento ou do último iniciado. É por eles que a análise recorta as fases,
+  com o mesmo relógio das amostras.
 
 ### Tipos de evento
 
@@ -154,10 +185,13 @@ por exemplo `protvr-log-2026-11-14T15-02-31-123Z.json`.
 | `menu-hover`              | `id` do botão (`prev`, `next`, `mode`, `center`, `scale-down`, `scale-reset`, `scale-up`, `exit`) ou `null`, `label` | laser entrou em um botão, trocou de botão ou saiu                |
 | `menu-click`              | `id`, `label` (rótulo antes da ação)                                                                                 | clique em botão do VRMenu                                        |
 | `sync`                    | `handedness`                                                                                                         | **borda de subida** do botão B/Y, um evento por toque            |
-| `session-start`           | `environmentBlendMode` (`opaque` = VR)                                                                               | início da sessão XR                                              |
-| `session-end`             | —                                                                                                                    | fim da sessão XR (a exportação automática vem logo depois)       |
+| `session-start`           | `environmentBlendMode` (`opaque` = VR), `frameRate` e `supportedFrameRates` (ou `null`), `frameIndex`, `frameT`        | início da sessão XR                                              |
+| `session-end`             | `frameIndex`, `frameT`                                                                                               | fim da sessão XR (a exportação automática vem logo depois)       |
+| `framerate-change`        | `frameRate`, `frameIndex`, `frameT`                                                                                  | a taxa de atualização da sessão mudou (`frameratechange`)        |
+| `phase-start`             | `phase` (`static`/`interaction`), `cycle`, `handedness`, `frameIndex`, `frameT`                                      | 1º e 2º toque no A/X de cada ciclo (só com `?perf=1`)            |
+| `phase-end`               | `cycle`, `handedness` (`null` se fechado pelo fim da sessão), `reason` opcional (`session-end`), `frameIndex`, `frameT` | 3º toque no A/X, ou fim da sessão com um ciclo aberto            |
+| `perf-buffer-full`        | `capacity`, `frameIndex`, `frameT`                                                                                   | o buffer de amostras encheu; a gravação de quadros parou         |
 | `load`                    | ver §5                                                                                                               | molécula carregada (depois do primeiro quadro desenhado com ela) |
-| `perf`                    | ver §5                                                                                                               | a cada ~1 s com `?perf=1`                                        |
 | `scenario-start`          | `id`, `files`                                                                                                        | início da carga de um cenário                                    |
 | `scenario-ready`          | `id`, `molecules` [`{id, name}`]                                                                                     | todas as moléculas do cenário na cena                            |
 | `scenario-error`          | `id`, `error`                                                                                                        | falha ao carregar o cenário                                      |
@@ -171,7 +205,10 @@ pelo botão **Exportar log**. Ela segue três caminhos ao mesmo tempo:
 
 1. **localStorage** (chave igual ao nome do arquivo): cópia de segurança **no
    navegador do próprio Quest**. Não dá para ler pelo PC. O botão **Logs salvos
-   (N)** baixa e reenvia todas as cópias guardadas.
+   (N)** baixa e reenvia todas as cópias guardadas. O limite é de ~5 MB por
+   origem e os logs salvos se acumulam. Se o log completo não couber, é salva
+   uma cópia **sem `frames`**, com o sufixo `-entries.json`, para não
+   sobrescrever o arquivo completo no PC caso seja reenviada.
 2. **Envio ao servidor de desenvolvimento:** `POST /__protvr/log`. O plugin do
    `vite.config.ts` grava o arquivo em **`logs/` no PC** que serve a aplicação.
    Só existe com `npm run dev`, não com `vite preview` nem no build. É o
@@ -180,8 +217,13 @@ pelo botão **Exportar log**. Ela segue três caminhos ao mesmo tempo:
    automática acontece sem gesto do usuário e pode ser bloqueada ou pedir
    confirmação. Por isso os caminhos 1 e 2 existem.
 
-O console do navegador mostra o resultado de cada caminho, com o prefixo
-`[ProtVR-log]`.
+O console do navegador mostra o tamanho do arquivo e o resultado de cada
+caminho, com o prefixo `[ProtVR-log]`.
+
+**Tamanho do arquivo com `?perf=1`.** As amostras são arredondadas na
+exportação e ocupam ~30 bytes por quadro. Uma execução de ~2,5 min a 72–90 Hz
+(~13,5 mil quadros) gera ~0,4 MB; o buffer cheio (131.072 quadros) gera
+~3,8 MB. O download e o envio ao servidor lidam bem com esses tamanhos.
 
 ---
 
@@ -211,14 +253,33 @@ Exemplo de linha no console:
 [ProtVR-perf] load 6H0F.pdb: 77598 átomos, 78423 ligações, 7 malhas, instancing=1 | read=… parse=… bonds=… build=… scene=… total=… firstFrame=… ms
 ```
 
-### Chamadas de desenho (evento `perf`, `?perf=1`)
+### Amostras por quadro (`frames`, `?perf=1`)
 
-| Campo                                   | Significado                                                                  |
-| --------------------------------------- | ---------------------------------------------------------------------------- |
-| `calls`, `triangles`, `lines`, `points` | `renderer.info.render` do último quadro                                      |
-| `geometries`, `textures`                | `renderer.info.memory`                                                       |
-| `frames`, `intervalMs`, `fps`           | quadros renderizados no intervalo e a taxa resultante, medida pela aplicação |
-| `presenting`                            | `true` durante a sessão XR                                                   |
+O `FrameSampler` grava uma amostra por quadro em `Float64Array`
+pré-alocados, um por campo. Não há alocação de objetos nem log no console por
+quadro, e nada aparece na cena. O custo extra são duas chamadas a
+`performance.now()` e seis escritas em array.
+
+| Campo        | Significado                                                                                                                                                                       | Arredondamento |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `t`          | `time` recebido do `setAnimationLoop`, em ms desde `timeOrigin`. Na sessão XR, vem do `requestAnimationFrame` do WebXR (no Quest, pode ser o instante previsto de exibição); no desktop, do rAF da janela | 3 casas        |
+| `dt`         | `t` menos o `t` do quadro anterior (`null` no primeiro)                                                                                                                           | 2 casas        |
+| `cpu`        | `performance.now()` do início do `renderLoop` até logo após `renderer.render()`: `controls.update`, `xrControllerManager.update` e o render. Não inclui o tempo de GPU, que termina de forma assíncrona | 2 casas        |
+| `calls`      | `renderer.info.render.calls`, lido logo após o render                                                                                                                             | inteiro        |
+| `triangles`  | `renderer.info.render.triangles`, lido logo após o render                                                                                                                         | inteiro        |
+| `presenting` | 1 durante a sessão XR, 0 fora dela                                                                                                                                                | inteiro        |
+
+Cabeçalho de `frames`: `count` (amostras gravadas), `capacity`, `full` e
+`timeOrigin` (o mesmo de `config`; `timeOrigin + t` dá o horário de época
+aproximado).
+
+- **Capacidade:** 131.072 quadros, cerca de 24 min a 90 Hz ou 18 min a 120 Hz.
+  O buffer conta **desde a abertura da página**, incluindo os quadros do
+  desktop (`presenting = 0`). Ao encher, a gravação **para** (não sobrescreve)
+  e o evento `perf-buffer-full` é registrado uma vez.
+- **Taxa de atualização:** `session.frameRate` e `session.supportedFrameRates`
+  vão no `session-start`, quando o navegador os informa; a mudança durante a
+  sessão gera `framerate-change`.
 
 **Os valores de `calls` e `triangles` são por quadro, ou seja, a soma dos dois
 olhos.** Com `info.autoReset = true` (o padrão), o three.js r186 zera os
@@ -257,7 +318,8 @@ Medições no desktop, com Node e o builder real:
    `https://<ip-do-pc>:5173/?...` no Quest Browser. Aceite o certificado, se
    pedido.
 4. **Recarregue a página entre execuções**, para que cada log e cada medição
-   comecem do zero. O log acumula tudo desde a abertura da página.
+   comecem do zero. O log e o buffer de quadros acumulam tudo desde a abertura
+   da página.
 
 ---
 
@@ -338,59 +400,92 @@ O campo `states_meeting_criterion` lista os estados com **revocação top-1 ≥
 
 ---
 
-## 8. Experimento 2: desempenho com o OVR Metrics Tool
+## 8. Experimento 2: desempenho (medido na aplicação)
 
-### 8.1 Coleta
+### 8.1 Marcação das fases com o botão A/X
 
-1. **Instale o OVR Metrics Tool** no Quest Pro, pelo Meta Quest Developer Hub
-   ou pela loja.
-2. **Ative a gravação em CSV** nas configurações dele ("Record all captured
-   metrics to CSV files" ou equivalente). Confirme no aparelho a pasta onde os
-   CSVs são salvos.
-3. **Para cada cenário (`c1`–`c4`) e condição** (sem e com `instancing=0`):
-   1. abra, por exemplo, `https://<ip-do-pc>:5173/?scenario=c2&perf=1&instancing=0`
-      e espere a molécula aparecer;
-   2. inicie a captura do OVR Metrics Tool;
-   3. entre em VR e fique **parado, olhando para as moléculas, por um tempo
-      fixo** (por exemplo, 60 s). Use sempre o mesmo tempo e a mesma posição;
-   4. saia da sessão. O log é exportado automaticamente;
-   5. pare a captura e recarregue a página antes da próxima execução.
-4. **Copie os CSVs para o PC.** Os logs já estão em `logs/`.
+Cada execução tem três fases: **estabilização (10 s)**, **estática (60 s)** e
+**interação (60 s)**. Com `?perf=1`, o botão **A** (controle direito) ou **X**
+(controle esquerdo), índice 4 do gamepad, marca as fases. O botão não tinha
+outro uso, e a detecção é pela borda de subida, como no `sync` do B/Y: um
+evento por toque, sem nenhum efeito visual.
 
-### 8.2 Análise
+| Toque           | Evento                                | Significado                              |
+| --------------- | ------------------------------------- | ---------------------------------------- |
+| 1º              | `phase-start` `{phase: "static"}`     | fim da estabilização, início da estática |
+| 2º              | `phase-start` `{phase: "interaction"}` | fim da estática, início da interação     |
+| 3º              | `phase-end`                           | fim da interação                         |
+| 4º              | `phase-start` `{phase: "static"}`     | recomeça o ciclo (`cycle` + 1)           |
+
+- A estabilização não tem marca própria: vai do `session-start` até o 1º toque.
+- Se a sessão terminar com um ciclo aberto, um `phase-end` com
+  `reason: "session-end"` é registrado automaticamente.
+- Sem `?perf=1`, o A/X é ignorado.
+- A e X avançam o mesmo ciclo. Use um único controle para não marcar duas vezes.
+
+### 8.2 Coleta
+
+Para cada cenário (`c1`–`c4`) × condição (instanciado e `instancing=0`), faça
+**3 repetições**, cada uma numa página recarregada:
+
+1. Abra, por exemplo, `https://<ip-do-pc>:5173/?scenario=c2&perf=1&instancing=0`
+   e espere a molécula aparecer.
+2. Entre em VR pelo botão **ENTER VR** e fique na posição de referência.
+3. **Estabilização:** espere 10 s sem interagir.
+4. **Toque no A (1º):** começa a fase estática. Fique 60 s parado, olhando para
+   as moléculas.
+5. **Toque no A (2º):** começa a fase de interação. Execute por 60 s o roteiro
+   de interação (mover, rotacionar, usar o menu).
+6. **Toque no A (3º):** fim da interação.
+7. Saia da sessão pelo menu (**Sair da Sessão VR**) ou pelo botão Meta. O log,
+   com as amostras por quadro, é exportado automaticamente e gravado em `logs/`
+   no PC.
+8. Recarregue a página antes da próxima repetição.
+
+Confira no terminal do `npm run dev` a mensagem `[ProtVR-log] gravado
+logs/...`. Se o envio falhar, use o botão **Logs salvos (N)** na página (a cópia
+no `localStorage` pode estar sem `frames`; nesse caso, use o download).
+
+Também dá para fazer as 3 repetições numa mesma sessão, tocando o A de novo
+para iniciar outro ciclo. Mas aí só o primeiro ciclo tem estabilização
+medida, e o recarregamento da página entre repetições não acontece.
+
+### 8.3 Análise
 
 ```bash
 cd analysis
-python perf_summary.py --list-columns ovr/c2_mesh.csv    # confira os nomes das colunas
-python perf_summary.py --manifest runs.csv --target-hz 72 \
-    [--columns columns.json] [--trim-start 5 --trim-end 2] --out results/perf_summary.csv
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-perf.txt          # só pandas e numpy
+python perf_summary.py ../logs/protvr-log-*.json --out results/perf
 ```
 
-**Manifesto (`runs.csv`).** Tem uma linha por execução, com os caminhos
-relativos à pasta do manifesto. Com o log preenchido, cenário e instancing vêm
-dele:
+O `perf_summary.py` lê o cenário e a condição do evento `config` e recorta as
+fases pelo `frameIndex` das marcas, usando só quadros com `presenting = 1`.
+Cada ciclo é uma repetição. Para cada cenário × condição × fase
+(`stabilization`, `static`, `interaction`), calcula:
 
-```csv
-ovr_csv,log,scenario,instancing
-ovr/c2_inst.csv,../logs/protvr-log-A.json,,
-ovr/c2_mesh.csv,../logs/protvr-log-B.json,,
-```
+- FPS em janelas de 1 s (contagem de quadros; a última janela incompleta é
+  descartada): média, desvio padrão e mínimo;
+- `dt` e `cpu`: média e percentil 95. O `dt` de um quadro cujo anterior não
+  estava em XR é ignorado;
+- quadros perdidos: percentual de quadros com `dt > 1,5 × 1000 / frameRate`,
+  usando a taxa vigente (`session-start`/`framerate-change`). Se o navegador
+  não informar a taxa, ela é estimada pela mediana do `dt`, com aviso. O fator
+  é ajustável com `--drop-factor`;
+- média de `calls` e `triangles`.
 
-**Colunas do OVR.** Os nomes **não foram confirmados**. O mapeamento padrão
-tenta candidatos como `FPS`, `App GPU Time` e `Time Stamp`. Ajuste com um
-`columns.json`; o formato está em `analysis/README.md`.
+Saídas em `results/perf/`:
 
-**Recorte das amostras.** Se os horários do CSV forem de época, as amostras são
-recortadas à sessão XR registrada no log. Caso contrário, use
-`--trim-start`/`--trim-end`.
+| Arquivo             | Conteúdo                                                                    |
+| ------------------- | --------------------------------------------------------------------------- |
+| `runs/<log>.csv`    | uma linha por repetição × fase de cada execução                             |
+| `perf_runs.csv`     | todas as repetições juntas                                                  |
+| `perf_summary.csv`  | cenário × condição × fase: média e desvio padrão entre repetições (`n_reps`) |
+| `loads.csv`         | tempos de carga de cada molécula (eventos `load`)                           |
+| `loads_summary.csv` | cenário × condição × molécula: média e desvio padrão de parse, bonds, build e total |
 
-**Saída.** Uma linha por cenário × instancing, com:
-
-- FPS: média, desvio padrão e mínimo;
-- tempo de GPU (ms): média, desvio padrão, mínimo e máximo;
-- `pct_below_target`: percentual de amostras com FPS abaixo de `--target-hz`;
-- vindos do log: tempo de carga, `firstFrameMs`, malhas, chamadas de desenho
-  (por quadro, dois olhos), triângulos e FPS medido pela aplicação.
+O script avisa quando o buffer encheu, quando faltam marcas de fase e quando
+alguma combinação não tem exatamente 3 repetições.
 
 ---
 
@@ -400,16 +495,16 @@ recortadas à sessão XR registrada no log. Caso contrário, use
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `src/core/ExperimentConfig.ts`                    | leitura dos parâmetros de URL (função pura)                                                  |
 | `src/core/InteractionObserver.ts`                 | interface do observador de interações; sem observador, o custo é uma checagem de `undefined` |
-| `src/core/EventLogger.ts`                         | registro de eventos e cálculo de E1–E5                                                       |
+| `src/core/EventLogger.ts`                         | registro de eventos, cálculo de E1–E5, ciclo de fases e exportação com `frames`              |
 | `src/core/LogExporter.ts`                         | localStorage, envio ao servidor de dev e download                                            |
-| `src/core/PerfSampler.ts`                         | amostragem de `renderer.info` uma vez por segundo                                            |
+| `src/core/FrameSampler.ts`                        | amostras por quadro em `Float64Array` pré-alocados (`?perf=1`)                               |
 | `src/core/LoadMetrics.ts`                         | tipo e formatação das métricas de carga                                                      |
 | `src/core/Scenarios.ts`                           | cenários e `C4_PAIR`                                                                         |
-| `src/core/XRControllerManager.ts`                 | avisa sobre laser e alvo, arraste e `sync` (borda de subida do B/Y)                          |
+| `src/core/XRControllerManager.ts`                 | avisa sobre laser e alvo, arraste, `sync` (B/Y) e marca de fase (A/X), por borda de subida   |
 | `src/core/VRMenu.ts`                              | avisa sobre hover e clique de botões                                                         |
 | `src/core/builders/BallAndStickBuilder.ts`        | condição instanciada ou não instanciada                                                      |
 | `src/core/parsers/PDBParser.ts`                   | tempos das etapas (a) e (b)                                                                  |
-| `src/components/MoleculeViewer/MoleculeViewer.ts` | tempos (c) e total, gancho após o render, carga lado a lado                                  |
+| `src/components/MoleculeViewer/MoleculeViewer.ts` | tempos (c) e total, ganchos por quadro no `renderLoop(time, frame)`, carga lado a lado        |
 | `src/components/Buttons/LogExportButton.ts`       | botões de exportação (só repassam cliques)                                                   |
 | `src/main.ts`                                     | liga as peças conforme os parâmetros                                                         |
 | `vite.config.ts`                                  | plugin `protvr-log-sink` (só em `npm run dev`)                                               |

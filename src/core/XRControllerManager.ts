@@ -53,6 +53,13 @@ export class XRControllerManager {
     right: false,
   };
 
+  /** Estado anterior do botão A/X por mão (marcação de fases). */
+  private readonly phaseButtonWasPressed: Record<XRHandedness, boolean> = {
+    none: false,
+    left: false,
+    right: false,
+  };
+
   /** Deadzone para leitura de thumbstick (0–1). */
   private static readonly THUMBSTICK_DEADZONE = 0.6;
 
@@ -61,6 +68,9 @@ export class XRControllerManager {
 
   /** Índice do botão B (mão direita) / Y (mão esquerda) que reposiciona o menu. */
   private static readonly MENU_BUTTON_INDEX = 5;
+
+  /** Índice do botão A (mão direita) / X (mão esquerda): marcação de fases. */
+  private static readonly PHASE_BUTTON_INDEX = 4;
 
   public constructor(
     renderer: THREE.WebGLRenderer,
@@ -212,6 +222,14 @@ export class XRControllerManager {
         this.observer?.syncPressed(hand);
       }
       this.menuButtonWasPressed[hand] = menuPressed;
+
+      // Botão A/X: só instrumentação (borda de subida); sem efeito visual
+      const phasePressed =
+        gamepad.buttons[XRControllerManager.PHASE_BUTTON_INDEX]?.pressed === true;
+      if (phasePressed && !this.phaseButtonWasPressed[hand]) {
+        this.observer?.phaseButtonPressed(hand);
+      }
+      this.phaseButtonWasPressed[hand] = phasePressed;
     }
   }
 
@@ -240,6 +258,7 @@ export class XRControllerManager {
 
     // Evita perder o primeiro toque do B/Y numa nova sessão
     this.menuButtonWasPressed[handedness] = false;
+    this.phaseButtonWasPressed[handedness] = false;
   };
 
   private handleDisconnected = (event: THREE.Event) => {

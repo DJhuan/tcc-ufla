@@ -1,5 +1,6 @@
 import type { WebXRManager } from "three";
 import type { MoleculeStore } from "../state/MoleculeStore";
+import type { FrameSampler } from "./FrameSampler";
 import type {
   InteractionObserver,
   LaserState,
@@ -23,8 +24,22 @@ export type LogEntry = {
 
 type LaserSlot = { state: LaserState; target: PointerTarget };
 
+export type EventLoggerOptions = {
+  /** Ativa o ciclo de fases do botão A/X (somente com ?perf=1). */
+  phaseMarking?: boolean;
+};
+
+/** Fases marcadas pelo botão A/X: 1º toque, 2º toque, 3º toque. */
+const PHASE_STEPS = ["static", "interaction", "end"] as const;
+
 export const LOG_FORMAT = "protvr-log";
-export const LOG_FORMAT_VERSION = 1;
+/**
+ * v1: só `entries`.
+ * v2: + `frames` (amostras por quadro, ?perf=1), fases do A/X,
+ *     frameRate na sessão e `frameIndex`/`frameT` nos eventos de sessão,
+ *     fase e taxa de atualização.
+ */
+export const LOG_FORMAT_VERSION = 2;
 
 export function epochNow(): number {
   return performance.timeOrigin + performance.now();
@@ -35,8 +50,8 @@ export function epochNow(): number {
  *
  * Registra apenas mudanças: estado do laser por controle, arraste,
  * modo de transformação, seleção/adição de moléculas, botões do VRMenu,
- * início/fim da sessão XR, "sync" (borda de subida do botão B/Y) e o
- * estado derivado E1–E5.
+ * início/fim da sessão XR, "sync" (borda de subida do botão B/Y), fases
+ * do experimento (A/X, com ?perf=1) e o estado derivado E1–E5.
  */
 export class EventLogger implements InteractionObserver {
   private readonly store: MoleculeStore;
@@ -44,6 +59,7 @@ export class EventLogger implements InteractionObserver {
   private readonly entries: LogEntry[] = [];
   private readonly startedAt: number;
   private readonly unsubscribers: Array<() => void> = [];
+  private readonly phaseMarking: boolean;
 
   // Um slot por handedness, pré-alocado (sem alocação ao derivar o estado).
   private readonly lasers: Record<XRHandedness, LaserSlot> = {
@@ -53,6 +69,11 @@ export class EventLogger implements InteractionObserver {
   };
   private currentState: InteractionState = "E1";
 
+  private frameSampler: FrameSampler | null = null;
+  private activeSession: XRSession | null = null;
+  private phaseStep = 0;
+  private phaseCycle = 0;
+
   /** Chamado após o registro do fim da sessão XR (exportação automática). */
   public onSessionEnd: (() => void) | null = null;
 
@@ -60,9 +81,11 @@ export class EventLogger implements InteractionObserver {
     store: MoleculeStore,
     xr: WebXRManager,
     meta: Record<string, unknown> = {},
+    options: EventLoggerOptions = {},
   ) {
     this.store = store;
     this.xr = xr;
+    this.phaseMarking = options.phaseMarking ?? false;
     this.startedAt = epochNow();
 
     this.log("config", {
@@ -90,6 +113,20 @@ export class EventLogger implements InteractionObserver {
     xr.addEventListener("sessionend", this.handleSessionEnd);
   }
 
+  /**
+   * Liga as amostras por quadro: elas entram no JSON exportado (`frames`) e
+   * servem de relógio para as marcas de fase.
+   */
+  public attachFrameSampler(sampler: FrameSampler): void {
+    this.frameSampler = sampler;
+    sampler.onBufferFull = () => {
+      this.log("perf-buffer-full", {
+        capacity: sampler.capacity,
+        ...this.frameRef(),
+      });
+    };
+  }
+
   public log(type: string, data: Record<string, unknown> = {}): void {
     this.entries.push({ t: epochNow(), type, data });
   }
@@ -102,14 +139,38 @@ export class EventLogger implements InteractionObserver {
     return this.entries.length;
   }
 
-  public toJSON(): string {
+  /**
+   * Serializa o registro. `includeFrames: false` gera uma versão só com
+   * `entries` (usada como cópia reduzida no localStorage).
+   */
+  public toJSON(options: { includeFrames?: boolean } = {}): string {
+    const includeFrames = options.includeFrames ?? true;
     return JSON.stringify({
       format: LOG_FORMAT,
       version: LOG_FORMAT_VERSION,
       startedAt: this.startedAt,
       exportedAt: epochNow(),
       entries: this.entries,
+      frames:
+        includeFrames && this.frameSampler
+          ? this.frameSampler.toJSONObject()
+          : null,
     });
+  }
+
+  /**
+   * Referência ao relógio das amostras por quadro: `frameIndex` é o índice
+   * da primeira amostra gravada a partir deste evento (-1 com o buffer
+   * cheio) e `frameT` o `time` do quadro em andamento ou do último iniciado.
+   */
+  private frameRef(): { frameIndex: number | null; frameT: number | null } {
+    const sampler = this.frameSampler;
+    if (!sampler) return { frameIndex: null, frameT: null };
+    const frameT = sampler.currentFrameTime;
+    return {
+      frameIndex: sampler.frameIndex,
+      frameT: Number.isNaN(frameT) ? null : frameT,
+    };
   }
 
   // --- InteractionObserver ---
@@ -136,6 +197,25 @@ export class EventLogger implements InteractionObserver {
 
   public syncPressed(handedness: XRHandedness): void {
     this.log("sync", { handedness });
+  }
+
+  /**
+   * Ciclo do A/X: 1º toque → phase-start {static}, 2º → phase-start
+   * {interaction}, 3º → phase-end; o 4º recomeça. Ignorado sem ?perf=1.
+   */
+  public phaseButtonPressed(handedness: XRHandedness): void {
+    if (!this.phaseMarking) return;
+
+    const step = PHASE_STEPS[this.phaseStep];
+    if (step === "static") this.phaseCycle += 1;
+
+    const data = { cycle: this.phaseCycle, handedness, ...this.frameRef() };
+    if (step === "end") {
+      this.log("phase-end", data);
+    } else {
+      this.log("phase-start", { phase: step, ...data });
+    }
+    this.phaseStep = (this.phaseStep + 1) % PHASE_STEPS.length;
   }
 
   public menuButtonHovered(
@@ -186,15 +266,48 @@ export class EventLogger implements InteractionObserver {
     }
   }
 
+  // --- Sessão XR ---
+
   private handleSessionStart = () => {
     const session = this.xr.getSession();
+    this.activeSession = session;
+    session?.addEventListener("frameratechange", this.handleFrameRateChange);
+
+    const rates = session?.supportedFrameRates;
     this.log("session-start", {
       environmentBlendMode: session?.environmentBlendMode ?? null,
+      frameRate: session?.frameRate ?? null,
+      supportedFrameRates: rates ? Array.from(rates) : null,
+      ...this.frameRef(),
+    });
+  };
+
+  private handleFrameRateChange = () => {
+    this.log("framerate-change", {
+      frameRate: this.activeSession?.frameRate ?? null,
+      ...this.frameRef(),
     });
   };
 
   private handleSessionEnd = () => {
-    this.log("session-end");
+    // Fecha um ciclo de fases interrompido pelo fim da sessão;
+    if (this.phaseMarking && this.phaseStep !== 0) {
+      this.log("phase-end", {
+        cycle: this.phaseCycle,
+        handedness: null,
+        reason: "session-end",
+        ...this.frameRef(),
+      });
+      this.phaseStep = 0;
+    }
+
+    this.activeSession?.removeEventListener(
+      "frameratechange",
+      this.handleFrameRateChange,
+    );
+    this.activeSession = null;
+
+    this.log("session-end", { ...this.frameRef() });
     this.resetLasers();
     this.updateState();
     this.onSessionEnd?.();
@@ -203,6 +316,10 @@ export class EventLogger implements InteractionObserver {
   public dispose(): void {
     for (const unsubscribe of this.unsubscribers) unsubscribe();
     this.unsubscribers.length = 0;
+    this.activeSession?.removeEventListener(
+      "frameratechange",
+      this.handleFrameRateChange,
+    );
     this.xr.removeEventListener("sessionstart", this.handleSessionStart);
     this.xr.removeEventListener("sessionend", this.handleSessionEnd);
   }
