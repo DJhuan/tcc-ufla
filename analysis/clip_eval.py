@@ -149,7 +149,7 @@ def pick_device(requested: str) -> str:
 def load_model(name: str, device: str):
     import open_clip
 
-    model, _, preprocess = open_clip.create_model_and_transforms(name, pretrained="openai", device=device)
+    model, _, preprocess = open_clip.create_model_and_transforms(name, pretrained="openai", force_quick_gelu=True, device=device)
     model.eval()
     tokenizer = open_clip.get_tokenizer(name)
     return model, preprocess, tokenizer
