@@ -155,14 +155,34 @@ def load_model(name: str, device: str):
     return model, preprocess, tokenizer
 
 
-def encode_images(model, preprocess, files: list[str], device: str, batch_size: int) -> np.ndarray:
+def pad_to_square(img):
+    """Completa a imagem com preto até ficar quadrada, sem cortar nada.
+
+    O pré-processamento do CLIP faz um corte central quadrado; num quadro 16:9
+    isso descarta ~22% da largura de cada lado, onde costumam ficar o laser e
+    o gizmo.
+    """
+    from PIL import Image
+
+    w, h = img.size
+    side = max(w, h)
+    canvas = Image.new("RGB", (side, side), (0, 0, 0))
+    canvas.paste(img, ((side - w) // 2, (side - h) // 2))
+    return canvas
+
+
+def encode_images(model, preprocess, files: list[str], device: str, batch_size: int, fit: str = "crop") -> np.ndarray:
     import torch
     from PIL import Image
+
+    def load(f):
+        img = Image.open(f).convert("RGB")
+        return pad_to_square(img) if fit == "pad" else img
 
     features = []
     with torch.no_grad():
         for start in range(0, len(files), batch_size):
-            batch = [preprocess(Image.open(f).convert("RGB")) for f in files[start:start + batch_size]]
+            batch = [preprocess(load(f)) for f in files[start:start + batch_size]]
             emb = model.encode_image(torch.stack(batch).to(device)).float()
             features.append(torch.nn.functional.normalize(emb, dim=-1).cpu().numpy())
             print(f"  imagens: {min(start + batch_size, len(files))}/{len(files)}", end="\r", flush=True)
@@ -200,6 +220,8 @@ def main() -> int:
     parser.add_argument("--sets", nargs="+", default=PROMPT_SETS, choices=PROMPT_SETS)
     parser.add_argument("--device", default="auto", help="auto, cpu, cuda ou mps")
     parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--fit", choices=["crop", "pad"], default="crop",
+                        help="crop: corte central quadrado do CLIP (padrão); pad: completa com preto até ficar quadrada, mantendo o quadro inteiro")
     parser.add_argument("--out", type=Path, default=Path("results/clip"))
     args = parser.parse_args()
 
@@ -222,9 +244,9 @@ def main() -> int:
     summary = []
     for raw_name in args.models:
         model_name = MODEL_ALIASES.get(raw_name, raw_name)
-        print(f"modelo {model_name} (openai) em {device}")
+        print(f"modelo {model_name} (openai) em {device}, ajuste da imagem: {args.fit}")
         model, preprocess, tokenizer = load_model(model_name, device)
-        image_features = encode_images(model, preprocess, labels["file"].tolist(), device, args.batch_size)
+        image_features = encode_images(model, preprocess, labels["file"].tolist(), device, args.batch_size, args.fit)
         logit_scale = float(model.logit_scale.exp().item())
 
         for prompt_set in args.sets:
@@ -239,6 +261,7 @@ def main() -> int:
                 metrics = evaluate(subset, probs_all[mask], out_dir, title)
                 summary.append({
                     "model": model_name,
+                    "fit": args.fit,
                     "prompt_set": prompt_set,
                     "condition": condition,
                     "n_frames": metrics["n_frames"],

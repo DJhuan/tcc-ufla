@@ -73,6 +73,17 @@ O `clip_eval.py` grava os resultados em `results/clip/<modelo>/<D|S>/<m1|m2>/`:
 A coluna `meets_criterion` e o campo `states_meeting_criterion` indicam os
 estados com revocação top-1 ≥ 50% (o acaso é 20%).
 
+`--fit` controla como cada quadro chega ao CLIP:
+
+- `crop` (padrão, usado nos resultados): o pré-processamento original do
+  open_clip, que redimensiona o lado menor para 224 px e faz um corte central
+  quadrado. Num vídeo 16:9, isso descarta cerca de 22% da largura de cada lado.
+- `pad`: completa o quadro com preto até ficar quadrado, sem cortar nada.
+
+`pad` serve só de controle: mostra se um estado não é reconhecido por ficar
+fora do corte ou por ser pequeno demais na resolução de 224 px. O
+`summary.csv` registra o modo usado na coluna `fit`.
+
 ## Experimento 2: desempenho
 
 Requer logs exportados com `?perf=1` (formato v2, com o campo `frames`) e as
