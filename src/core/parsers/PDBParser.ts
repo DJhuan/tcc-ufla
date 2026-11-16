@@ -84,30 +84,19 @@ export class PDBParser implements IMoleculeParser {
   }
 
   /**
-   * Extrai as ligações em parsed.geometryBonds retornadas pelo PDBLoader do Three.js
-   * (que processa os registros CONECT/ligações atípicas do PDB) e faz merge com as
-   * ligações calculadas por distância, eliminando duplicatas.
+   * Combina as ligações calculadas por distância com as dos registros CONECT,
+   * que o PDBLoader do Three.js devolve em parsed.geometryBonds.
    */
   private mergeBondsWithGeometryBonds(
     calculatedBonds: import("../../domain/types/molecule").Bond[],
     geometryBonds: THREE.BufferGeometry,
     rawAtomPositions: Float32Array,
   ): import("../../domain/types/molecule").Bond[] {
-    const bonds = [...calculatedBonds];
-    const bondSet = new Set<string>();
-
-    for (let i = 0; i < calculatedBonds.length; i++) {
-      const b = calculatedBonds[i];
-      const min = Math.min(b.startAtomIndex, b.endAtomIndex);
-      const max = Math.max(b.startAtomIndex, b.endAtomIndex);
-      bondSet.add(`${min}-${max}`);
-    }
-
     const bondPositions = geometryBonds.getAttribute(
       "position",
     ) as THREE.BufferAttribute | undefined;
     if (!bondPositions || bondPositions.count < 2) {
-      return bonds;
+      return calculatedBonds;
     }
 
     // Mapa de coordenadas originais (x,y,z arredondadas em 0,001Å) para índice atômico
@@ -120,6 +109,11 @@ export class PDBParser implements IMoleculeParser {
       );
       coordToAtomIndex.set(key, i / 3);
     }
+
+    // Pares e átomos citados no CONECT
+    const conectPairs: Array<[number, number]> = [];
+    const conectSet = new Set<string>();
+    const conectAtoms = new Set<number>();
 
     const bondArray = bondPositions.array;
     for (let i = 0; i < bondArray.length; i += 6) {
@@ -138,13 +132,48 @@ export class PDBParser implements IMoleculeParser {
         const max = Math.max(a1, a2);
         const pairKey = `${min}-${max}`;
 
-        if (!bondSet.has(pairKey)) {
-          bondSet.add(pairKey);
-          bonds.push({
-            startAtomIndex: min,
-            endAtomIndex: max,
-          });
+        if (!conectSet.has(pairKey)) {
+          conectSet.add(pairKey);
+          conectPairs.push([min, max]);
+          conectAtoms.add(min);
+          conectAtoms.add(max);
         }
+      }
+    }
+
+    if (conectPairs.length === 0) {
+      return calculatedBonds;
+    }
+
+    // Ligações por distância, exceto as que ligam dois átomos do CONECT sem
+    // que o CONECT as declare
+    const bonds: import("../../domain/types/molecule").Bond[] = [];
+    const bondSet = new Set<string>();
+    for (let i = 0; i < calculatedBonds.length; i++) {
+      const b = calculatedBonds[i];
+      const min = Math.min(b.startAtomIndex, b.endAtomIndex);
+      const max = Math.max(b.startAtomIndex, b.endAtomIndex);
+      const pairKey = `${min}-${max}`;
+
+      if (
+        conectAtoms.has(min) &&
+        conectAtoms.has(max) &&
+        !conectSet.has(pairKey)
+      ) {
+        continue;
+      }
+
+      bondSet.add(pairKey);
+      bonds.push(b);
+    }
+
+    // Ligações do CONECT que a distância não encontrou
+    for (let i = 0; i < conectPairs.length; i++) {
+      const [min, max] = conectPairs[i];
+      const pairKey = `${min}-${max}`;
+      if (!bondSet.has(pairKey)) {
+        bondSet.add(pairKey);
+        bonds.push({ startAtomIndex: min, endAtomIndex: max });
       }
     }
 
